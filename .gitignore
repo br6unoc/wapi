@@ -1,0 +1,26 @@
+# Sessões do WhatsApp (dados sensíveis)
+sessions/
+*.db
+*.db-shm
+*.db-wal
+
+# Configurações locais
+.env
+.env.backup
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temp
+tmp/
+temp/

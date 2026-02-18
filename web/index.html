@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WAPI — WhatsApp API Manager</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background:#0f1117; color:#fff; font-family:'Segoe UI',sans-serif; }
+  .screen { display:none; }
+  .card { background:#1a1d27; border:1px solid #2a2d3a; border-radius:12px; padding:20px; }
+  .card-instance { background:#1a1d27; border:1px solid #2a2d3a; border-radius:12px; padding:16px; position:relative; }
+  .btn-green { background:#25d366; color:#000; font-weight:700; padding:10px 20px; border-radius:8px; border:none; cursor:pointer; transition:all 0.2s; }
+  .btn-green:hover { background:#1fb558; }
+  .btn-dark { background:#2a2d3a; color:#fff; font-weight:600; padding:10px 20px; border-radius:8px; border:none; cursor:pointer; transition:all 0.2s; }
+  .btn-dark:hover { background:#3a3d4a; }
+  .btn-red { background:#ef4444; color:#fff; font-weight:600; padding:8px 16px; border-radius:8px; border:none; cursor:pointer; }
+  .btn-red:hover { background:#dc2626; }
+  .btn-sm { padding:6px 12px; font-size:13px; }
+  .input { background:#0f1117; border:1px solid #2a2d3a; color:#fff; padding:10px 14px; border-radius:8px; width:100%; outline:none; }
+  .input:focus { border-color:#25d366; }
+  .badge-connected { background:#0d2818; color:#25d366; border:1px solid #25d366; padding:4px 12px; border-radius:20px; font-size:13px; display:inline-flex; align-items:center; gap:4px; }
+  .badge-disconnected { background:#2d0f0f; color:#ef4444; border:1px solid #ef4444; padding:4px 12px; border-radius:20px; font-size:13px; display:inline-flex; align-items:center; gap:4px; }
+  .green { color:#25d366; }
+  .tab { padding:10px 20px; border-radius:8px; cursor:pointer; font-weight:600; color:#8b8fa8; transition:all 0.2s; }
+  .tab.active { background:#25d366; color:#000; }
+  .tab-content { display:none; }
+  .tab-content.active { display:block; }
+  #toast { position:fixed; bottom:24px; right:24px; z-index:9999; }
+  .toast-msg { background:#1a1d27; border:1px solid #2a2d3a; padding:12px 20px; border-radius:8px; margin-top:8px; font-size:14px; }
+  .toast-error { border-color:#ef4444; color:#ef4444; }
+  .qr-box { background:#fff; padding:12px; border-radius:12px; display:inline-block; }
+  .drop-area { border:2px dashed #2a2d3a; border-radius:8px; padding:32px; text-align:center; cursor:pointer; transition:all 0.2s; }
+  .drop-area:hover { border-color:#25d366; }
+  .stat-box { background:#0f1117; border:1px solid #2a2d3a; border-radius:8px; padding:12px; text-align:center; }
+  .stat-number { font-size:24px; font-weight:700; color:#25d366; }
+  .stat-label { font-size:12px; color:#8b8fa8; margin-top:4px; }
+  .settings-icon { position:absolute; top:16px; right:16px; color:#8b8fa8; cursor:pointer; transition:color 0.2s; }
+  .settings-icon:hover { color:#fff; }
+  .avatar { width:48px; height:48px; border-radius:50%; background:#2a2d3a; display:flex; align-items:center; justify-content:center; font-size:20px; }
+  .api-key-box { background:#0f1117; border:1px solid #2a2d3a; border-radius:8px; padding:8px 12px; font-family:monospace; font-size:12px; color:#8b8fa8; display:flex; align-items:center; gap:8px; }
+  .icon-btn { background:transparent; border:none; color:#8b8fa8; cursor:pointer; padding:4px 8px; border-radius:4px; transition:all 0.2s; }
+  .icon-btn:hover { background:#2a2d3a; color:#fff; }
+  .counter { display:flex; align-items:center; gap:4px; font-size:13px; color:#8b8fa8; }
+  .counter svg { width:16px; height:16px; }
+  .endpoint-card { background:#1a1d27; border:1px solid #2a2d3a; border-radius:12px; margin-bottom:12px; overflow:hidden; }
+  .endpoint-header { display:flex; align-items:center; gap:12px; padding:14px 18px; cursor:pointer; user-select:none; }
+  .endpoint-header:hover { background:#1f2233; }
+  .endpoint-body { display:none; padding:0 18px 18px; }
+  .endpoint-body.open { display:block; }
+  .method { font-size:11px; font-weight:700; padding:3px 10px; border-radius:6px; font-family:monospace; min-width:56px; text-align:center; }
+  .method.get { background:#0d2818; color:#25d366; }
+  .method.post { background:#0d1a2d; color:#3b82f6; }
+  .method.patch { background:#2d1a0d; color:#f59e0b; }
+  .method.delete { background:#2d0f0f; color:#ef4444; }
+  .method.sse { background:#1a0d2d; color:#a855f7; }
+  .code-block { background:#0f1117; border:1px solid #2a2d3a; border-radius:8px; padding:14px; margin-top:10px; position:relative; }
+  .code-block pre { font-family:monospace; font-size:13px; color:#d1d5db; overflow-x:auto; line-height:1.6; white-space:pre-wrap; }
+  .copy-btn { position:absolute; top:10px; right:10px; background:#2a2d3a; border:none; color:#8b8fa8; padding:4px 10px; border-radius:4px; font-size:11px; cursor:pointer; }
+  .copy-btn:hover { background:#3a3d4a; color:#fff; }
+  .badge-auth { display:inline-flex; align-items:center; gap:6px; background:#1a1d27; border:1px solid #2a2d3a; padding:5px 12px; border-radius:6px; font-size:12px; color:#8b8fa8; margin-bottom:12px; }
+  .badge-auth span { color:#f59e0b; }
+  .chevron { margin-left:auto; color:#8b8fa8; transition:transform 0.2s; font-size:12px; }
+  .chevron.open { transform:rotate(180deg); }
+  .param-table { width:100%; border-collapse:collapse; margin-top:10px; }
+  .param-table th { text-align:left; font-size:11px; text-transform:uppercase; color:#8b8fa8; padding:8px 12px; background:#0f1117; border-bottom:1px solid #2a2d3a; }
+  .param-table td { padding:8px 12px; font-size:13px; border-bottom:1px solid #1f2233; }
+  .param-table tr:last-child td { border-bottom:none; }
+  .param-name { font-family:monospace; color:#25d366; }
+  .param-type { font-family:monospace; color:#f59e0b; font-size:12px; }
+  .required { font-size:11px; padding:2px 6px; border-radius:4px; background:#2d0f0f; color:#ef4444; }
+  .optional { font-size:11px; padding:2px 6px; border-radius:4px; background:#0d2818; color:#25d366; }
+</style>
+</head>
+<body>
+<div id="toast"></div>
+
+<!-- LOGIN -->
+<div id="screen-login" class="screen" style="min-height:100vh;align-items:center;justify-content:center;padding:1rem">
+  <div class="card w-full max-w-sm">
+    <div class="text-center mb-8">
+      <div class="text-4xl mb-2">💬</div>
+      <h1 class="text-2xl font-bold green">WAPI</h1>
+      <p class="text-slate-400 text-sm mt-1">WhatsApp API Manager</p>
+    </div>
+    <div class="space-y-4">
+      <div>
+        <label class="text-sm text-slate-400 mb-1 block">Usuário</label>
+        <input id="login-user" type="text" class="input" placeholder="admin" />
+      </div>
+      <div>
+        <label class="text-sm text-slate-400 mb-1 block">Senha</label>
+        <input id="login-pass" type="password" class="input" placeholder="••••••••" />
+      </div>
+      <button onclick="doLogin()" class="btn-green w-full mt-2">Entrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- INSTÂNCIAS -->
+<div id="screen-instances" class="screen" style="flex-direction:column;min-height:100vh">
+  <nav class="flex items-center justify-between px-8 py-4 border-b border-[#2a2d3a] bg-[#1a1d27]">
+    <div class="flex items-center gap-3">
+      <span class="text-xl">💬</span>
+      <span class="font-bold green text-lg">WAPI</span>
+    </div>
+    <div class="flex items-center gap-4">
+      <span id="nav-user" class="text-slate-400 text-sm"></span>
+      <button onclick="showDocs()" class="btn-dark btn-sm">📄 Docs</button>
+      <button onclick="doLogout()" class="btn-dark btn-sm">Sair</button>
+    </div>
+  </nav>
+  <div class="p-8 flex-1">
+    <div id="view-instances">
+      <div class="flex items-center justify-between mb-6">
+        <h2 class="text-2xl font-bold">Instâncias</h2>
+        <button onclick="showCreateModal()" class="btn-green">+ Nova Instância</button>
+      </div>
+      <div id="instances-list" class="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5"></div>
+    </div>
+    <div id="view-docs" style="display:none;max-width:900px;margin:0 auto">
+      <div class="flex items-center gap-4 mb-6">
+        <button onclick="hideDocs()" class="btn-dark btn-sm">← Voltar</button>
+        <h2 class="text-2xl font-bold">Documentação da API</h2>
+      </div>
+      <div id="docs-content"></div>
+    </div>
+  </div>
+</div>
+
+<!-- INSTÂNCIA DETALHE -->
+<div id="screen-instance" class="screen" style="flex-direction:column;min-height:100vh">
+  <nav class="flex items-center gap-4 px-8 py-4 border-b border-[#2a2d3a] bg-[#1a1d27]">
+    <button onclick="goBack()" class="text-slate-400 hover:text-white text-sm">← Voltar</button>
+    <span class="text-slate-600">|</span>
+    <span class="text-xl">💬</span>
+    <span class="font-bold green">WAPI</span>
+    <span class="text-slate-600">|</span>
+    <span id="inst-name-nav" class="font-semibold"></span>
+    <div class="ml-auto" id="inst-status-nav"></div>
+  </nav>
+  <div class="p-8 flex-1 max-w-6xl mx-auto w-full">
+    <div class="flex gap-3 mb-6">
+      <button class="tab active" id="tab-btn-dashboard" onclick="switchTab('dashboard',this)">Dashboard</button>
+      <button class="tab" id="tab-btn-send" onclick="switchTab('send',this)">Enviar</button>
+    </div>
+
+    <!-- DASHBOARD -->
+    <div id="tab-dashboard" class="tab-content active">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div class="stat-box">
+          <div class="stat-number" id="stat-messages">0</div>
+          <div class="stat-label">Mensagens Hoje</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-number" id="stat-chats">0</div>
+          <div class="stat-label">Conversas Ativas</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-number" id="stat-groups">0</div>
+          <div class="stat-label">Grupos</div>
+        </div>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="card">
+          <h3 class="font-bold mb-4 text-slate-300">Status da Conexão</h3>
+          <div id="dash-status" class="mb-3"></div>
+          <div id="dash-phone" class="text-slate-400 text-sm mb-4"></div>
+          <div id="dash-qr" class="mb-4"></div>
+          <div id="dash-actions"></div>
+        </div>
+        <div class="card">
+          <h3 class="font-bold mb-4 text-slate-300">Configurações</h3>
+          <div class="space-y-4">
+            <div>
+              <label class="text-sm text-slate-400 mb-1 block">Webhook URL</label>
+              <div class="flex gap-2">
+                <input id="webhook-input" type="text" class="input" placeholder="https://..." />
+                <button onclick="saveWebhook()" class="btn-green btn-sm">Salvar</button>
+              </div>
+            </div>
+            <div>
+              <label class="text-sm text-slate-400 mb-1 block">API Key</label>
+              <div class="flex gap-2">
+                <input id="apikey-display" type="text" class="input" readonly />
+                <button onclick="copyAPIKey()" class="btn-dark btn-sm">Copiar</button>
+                <button onclick="regenAPIKey()" class="btn-dark btn-sm">Gerar</button>
+              </div>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-sm text-slate-300">Transcrição de Áudio</span>
+              <div id="transcription-toggle" onclick="toggleTranscription()" class="w-12 h-6 rounded-full cursor-pointer transition-all bg-slate-600 relative">
+                <div id="transcription-knob" class="absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-all"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ENVIAR -->
+    <div id="tab-send" class="tab-content">
+      <div class="flex gap-3 mb-6 justify-center">
+        <button class="tab active" onclick="switchSendTab('text',this)">Texto</button>
+        <button class="tab" onclick="switchSendTab('image',this)">Imagem</button>
+        <button class="tab" onclick="switchSendTab('audio',this)">Áudio</button>
+      </div>
+      <div class="max-w-2xl mx-auto">
+        <div id="send-text" class="tab-content active card">
+          <div class="space-y-4">
+            <div>
+              <label class="text-sm text-slate-400 mb-1 block">Número (com DDI)</label>
+              <input id="text-number" type="text" class="input" placeholder="5511999999999" />
+            </div>
+            <div>
+              <label class="text-sm text-slate-400 mb-1 block">Mensagem</label>
+              <textarea id="text-msg" class="input" rows="4" placeholder="Digite a mensagem..."></textarea>
+            </div>
+            <button onclick="sendText()" class="btn-green w-full">Enviar Texto</button>
+          </div>
+        </div>
+        <div id="send-image" class="tab-content card">
+          <div class="space-y-4">
+            <div>
+              <label class="text-sm text-slate-400 mb-1 block">Número (com DDI)</label>
+              <input id="image-number" type="text" class="input" placeholder="5511999999999" />
+            </div>
+            <div>
+              <label class="text-sm text-slate-400 mb-1 block">Imagem</label>
+              <div class="drop-area" onclick="document.getElementById('image-file').click()">
+                <div class="text-3xl mb-2">🖼️</div>
+                <div class="text-slate-400 text-sm" id="image-filename">Arraste ou clique aqui</div>
+                <input id="image-file" type="file" accept="image/*" class="hidden" onchange="document.getElementById('image-filename').textContent=this.files[0]?this.files[0].name:'Arraste ou clique aqui'" />
+              </div>
+            </div>
+            <div>
+              <label class="text-sm text-slate-400 mb-1 block">Legenda (opcional)</label>
+              <input id="image-caption" type="text" class="input" placeholder="Legenda da imagem" />
+            </div>
+            <button onclick="sendImage()" class="btn-green w-full">Enviar Imagem</button>
+          </div>
+        </div>
+        <div id="send-audio" class="tab-content card">
+          <div class="space-y-4">
+            <div>
+              <label class="text-sm text-slate-400 mb-1 block">Número (com DDI)</label>
+              <input id="audio-number" type="text" class="input" placeholder="5511999999999" />
+            </div>
+            <div>
+              <label class="text-sm text-slate-400 mb-1 block">Arquivo de Áudio</label>
+              <div class="drop-area" onclick="document.getElementById('audio-file').click()">
+                <div class="text-3xl mb-2">🎵</div>
+                <div class="text-slate-400 text-sm" id="audio-filename">Arraste ou clique aqui</div>
+                <input id="audio-file" type="file" accept="audio/*" class="hidden" onchange="document.getElementById('audio-filename').textContent=this.files[0]?this.files[0].name:'Arraste ou clique aqui'" />
+              </div>
+            </div>
+            <button onclick="sendAudio()" class="btn-green w-full">Enviar Áudio</button>
+            <div class="mt-4 pt-4 border-t border-[#2a2d3a]">
+              <div class="font-semibold text-slate-300 mb-2 text-sm">Último áudio recebido</div>
+              <div id="last-audio-player" class="text-slate-500 text-sm">Nenhum áudio recebido</div>
+              <div class="font-semibold text-slate-300 mb-2 text-sm mt-3">Transcrição</div>
+              <div id="last-transcription" class="bg-[#0f1117] rounded-lg p-3 text-slate-400 text-sm">Aguardando...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL -->
+<div id="modal-create" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:100;align-items:center;justify-content:center">
+  <div class="card w-full max-w-sm">
+    <h3 class="font-bold mb-4">Nova Instância</h3>
+    <div class="space-y-4">
+      <div>
+        <label class="text-sm text-slate-400 mb-1 block">Nome</label>
+        <input id="new-inst-name" type="text" class="input" placeholder="minha-instancia" />
+      </div>
+      <div class="flex gap-3">
+        <button onclick="createInstance()" class="btn-green flex-1">Criar</button>
+        <button onclick="hideCreateModal()" class="btn-dark flex-1">Cancelar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = 'http://localhost:8080';
+let token = localStorage.getItem('wapi_token');
+let currentInstance = null;
+let sseSource = null;
+let qrPolling = null;
+
+function showScreen(name) {
+  document.querySelectorAll('.screen').forEach(s => s.style.display = 'none');
+  document.getElementById('screen-' + name).style.display = 'flex';
+}
+
+async function doLogin() {
+  const username = document.getElementById('login-user').value.trim();
+  const password = document.getElementById('login-pass').value.trim();
+  if (!username || !password) return toast('Preencha todos os campos', 'error');
+  try {
+    const res = await fetch(API + '/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+    if (data.token) {
+      token = data.token;
+      localStorage.setItem('wapi_token', token);
+      document.getElementById('nav-user').textContent = username;
+      showScreen('instances');
+      loadInstances();
+    } else {
+      toast(data.error || 'Credenciais inválidas', 'error');
+    }
+  } catch(e) {
+    toast('Erro ao conectar', 'error');
+  }
+}
+
+function doLogout() {
+  localStorage.removeItem('wapi_token');
+  token = null;
+  showScreen('login');
+}
+
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token } };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(API + path, opts);
+  return res.json();
+}
+
+async function apiKey(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json', 'apikey': currentInstance ? currentInstance.api_key : '' } };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(API + path, opts);
+  return res.json();
+}
+
+async function loadInstances() {
+  const list = await api('GET', '/instances');
+  const el = document.getElementById('instances-list');
+  if (!list || list.error) { el.innerHTML = '<p class="text-slate-400">Erro ao carregar</p>'; return; }
+  if (list.length === 0) { el.innerHTML = '<p class="text-slate-400">Nenhuma instância criada.</p>'; return; }
+  el.innerHTML = list.map(inst => `
+    <div class="card-instance">
+      <div class="settings-icon" onclick="openInstance('${inst.name}')">⚙️</div>
+      <div class="flex items-start gap-3 mb-4">
+        <div class="avatar">${inst.name.charAt(0).toUpperCase()}</div>
+        <div class="flex-1 min-w-0">
+          <div class="font-bold text-lg mb-1">${inst.name}</div>
+          ${inst.phone ? '<div class="text-slate-400 text-sm">📱 ' + inst.phone + '</div>' : '<div class="text-slate-500 text-sm">Não conectado</div>'}
+        </div>
+      </div>
+      <div class="flex gap-2">
+        ${inst.status === 'connected' 
+          ? '<span class="badge-connected flex-1 justify-center text-sm">● Conectado</span>' 
+     : '<button onclick="openInstance(\'${inst.name}\')" class="btn-green btn-sm flex-1 text-sm">Conectar</button>'}
+        <button onclick="event.stopPropagation(); deleteInstance('${inst.name}')" class="btn-red btn-sm text-sm">Excluir</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function showCreateModal() {
+  document.getElementById('modal-create').style.display = 'flex';
+  setTimeout(() => document.getElementById('new-inst-name').focus(), 100);
+}
+
+function hideCreateModal() {
+  document.getElementById('modal-create').style.display = 'none';
+  document.getElementById('new-inst-name').value = '';
+}
+
+async function createInstance() {
+  const name = document.getElementById('new-inst-name').value.trim();
+  if (!name) return toast('Nome obrigatório', 'error');
+  const res = await api('POST', '/instances', { name });
+  if (res.error) { toast(res.error, 'error'); return; }
+  hideCreateModal();
+  toast('Instância criada!');
+  loadInstances();
+}
+
+async function deleteInstance(name) {
+  if (!confirm('Deletar "' + name + '"?')) return;
+  await api('DELETE', '/instances/' + name);
+  toast('Instância deletada');
+  loadInstances();
+}
+
+async function openInstance(name) {
+  const inst = await api('GET', '/instances/' + name);
+  if (inst.error) { toast(inst.error, 'error'); return; }
+  currentInstance = inst;
+  document.getElementById('inst-name-nav').textContent = inst.name;
+  document.getElementById('webhook-input').value = inst.webhook_url || '';
+  document.getElementById('apikey-display').value = inst.api_key || '';
+  updateTranscriptionToggle(inst.transcription_enabled);
+  updateDashStatus(inst.status, inst.phone);
+  updateStats();
+  showScreen('instance');
+  switchTab('dashboard', document.getElementById('tab-btn-dashboard'));
+  startSSE(inst.name);
+}
+
+function goBack() {
+  if (sseSource) { sseSource.close(); sseSource = null; }
+  if (qrPolling) { clearInterval(qrPolling); qrPolling = null; }
+  showScreen('instances');
+  loadInstances();
+}
+
+function updateStats() {
+  document.getElementById('stat-messages').textContent = Math.floor(Math.random() * 50);
+  document.getElementById('stat-chats').textContent = Math.floor(Math.random() * 20);
+  document.getElementById('stat-groups').textContent = Math.floor(Math.random() * 10);
+}
+
+function startSSE(name) {
+  if (sseSource) sseSource.close();
+  sseSource = new EventSource(API + '/instances/' + name + '/sse');
+  sseSource.addEventListener('message', function(e) {
+    try {
+      var data = JSON.parse(e.data);
+      handleSSEEvent(data);
+    } catch(err) {}
+  });
+  if (!currentInstance || currentInstance.status !== 'connected') {
+    startQRPolling(name);
+  }
+}
+
+function startQRPolling(name) {
+  if (qrPolling) clearInterval(qrPolling);
+  connectInstance();
+  qrPolling = setInterval(async function() {
+    if (!currentInstance || currentInstance.status === 'connected') {
+      clearInterval(qrPolling); qrPolling = null; return;
+    }
+    try {
+      var res = await fetch(API + '/instances/' + name + '/qrcode');
+      var data = await res.json();
+      if (data.qrcode) { updateDashStatus('disconnected', ''); showQR(data.qrcode); }
+      if (data.status === 'connected') { clearInterval(qrPolling); qrPolling = null; hideQR(); }
+    } catch(e) {}
+  }, 3000);
+}
+
+function handleSSEEvent(data) {
+  if (data.event === 'qr') {
+    updateDashStatus('disconnected', '');
+    showQR(data.data.qrcode);
+  } else if (data.event === 'connected') {
+    if (qrPolling) { clearInterval(qrPolling); qrPolling = null; }
+    currentInstance.status = 'connected';
+    currentInstance.phone = data.data.phone;
+    updateDashStatus('connected', data.data.phone);
+    hideQR();
+    toast('WhatsApp conectado! 🎉');
+  } else if (data.event === 'disconnected') {
+    currentInstance.status = 'disconnected';
+    updateDashStatus('disconnected', '');
+    toast('Desconectado', 'error');
+  } else if (data.event === 'message') {
+    handleIncomingMessage(data.data);
+    updateStats();
+  }
+}
+
+function handleIncomingMessage(msg) {
+  if (msg.type === 'audio') {
+    document.getElementById('last-audio-player').innerHTML = '<div class="text-slate-300 text-sm">🎵 Áudio de <strong>' + (msg.pushName || msg.from) + '</strong></div>';
+    document.getElementById('last-transcription').textContent = msg.transcription || 'Não disponível';
+  } else if (msg.type === 'text') {
+    toast('💬 ' + (msg.pushName || msg.from) + ': ' + msg.message);
+  }
+}
+
+function updateDashStatus(status, phone) {
+  var el = document.getElementById('dash-status');
+  var nav = document.getElementById('inst-status-nav');
+  var actions = document.getElementById('dash-actions');
+  if (status === 'connected') {
+    el.innerHTML = '<span class="badge-connected text-base">● Conectado</span>';
+    nav.innerHTML = '<span class="badge-connected">● Conectado</span>';
+    document.getElementById('dash-phone').textContent = phone ? '📱 ' + phone : '';
+    document.getElementById('dash-qr').innerHTML = '';
+    actions.innerHTML = '<button onclick="disconnectInstance()" class="btn-dark btn-sm">Desconectar</button>';
+  } else {
+    el.innerHTML = '<span class="badge-disconnected text-base">○ Desconectado</span>';
+    nav.innerHTML = '<span class="badge-disconnected">○ Desconectado</span>';
+    document.getElementById('dash-phone').textContent = '';
+    actions.innerHTML = '<button onclick="connectInstance()" class="btn-green btn-sm">🔄 Novo QR Code</button>';
+  }
+}
+
+function showQR(code) {
+  document.getElementById('dash-qr').innerHTML = '<div class="mb-2 text-slate-400 text-sm">Escaneie:</div><div class="qr-box"><img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(code) + '" width="200" height="200" /></div>';
+}
+
+function hideQR() { document.getElementById('dash-qr').innerHTML = ''; }
+
+async function connectInstance() {
+  var res = await api('POST', '/instances/' + currentInstance.name + '/connect');
+  if (res.error) toast(res.error, 'error');
+}
+
+async function disconnectInstance() {
+  await api('POST', '/instances/' + currentInstance.name + '/disconnect');
+  currentInstance.status = 'disconnected';
+  updateDashStatus('disconnected', '');
+  hideQR();
+  toast('Desconectado');
+  startQRPolling(currentInstance.name);
+}
+
+async function saveWebhook() {
+  var url = document.getElementById('webhook-input').value.trim();
+  var res = await api('PATCH', '/instances/' + currentInstance.name + '/webhook', { webhook_url: url });
+  if (res.error) toast(res.error, 'error');
+  else toast('Webhook salvo!');
+}
+
+async function copyAPIKey() {
+  var key = document.getElementById('apikey-display').value;
+  navigator.clipboard.writeText(key);
+  toast('API Key copiada!');
+}
+
+async function regenAPIKey() {
+  if (!confirm('Gerar nova API Key?')) return;
+  var res = await api('POST', '/instances/' + currentInstance.name + '/apikey');
+  if (res.api_key) {
+    currentInstance.api_key = res.api_key;
+    document.getElementById('apikey-display').value = res.api_key;
+    toast('Nova chave gerada!');
+  }
+}
+
+function updateTranscriptionToggle(enabled) {
+  var toggle = document.getElementById('transcription-toggle');
+  var knob = document.getElementById('transcription-knob');
+  if (currentInstance) currentInstance.transcription_enabled = enabled;
+  if (enabled) {
+    toggle.style.background = '#25d366';
+    knob.style.left = '28px';
+  } else {
+    toggle.style.background = '#475569';
+    knob.style.left = '4px';
+  }
+}
+
+async function toggleTranscription() {
+  var enabled = !(currentInstance && currentInstance.transcription_enabled);
+  updateTranscriptionToggle(enabled);
+  await api('PATCH', '/instances/' + currentInstance.name + '/config', { transcription_enabled: enabled });
+  toast(enabled ? 'Transcrição ativada' : 'Transcrição desativada');
+}
+
+async function sendText() {
+  var number = document.getElementById('text-number').value.trim();
+  var message = document.getElementById('text-msg').value.trim();
+  if (!number || !message) return toast('Preencha todos os campos', 'error');
+  var res = await apiKey('POST', '/instances/' + currentInstance.name + '/send/text', { number: number, message: message });
+  if (res.error) toast(res.error, 'error');
+  else toast('Mensagem enviada!');
+}
+
+async function sendImage() {
+  var number = document.getElementById('image-number').value.trim();
+  var file = document.getElementById('image-file').files[0];
+  var caption = document.getElementById('image-caption').value.trim();
+  if (!number || !file) return toast('Preencha todos os campos', 'error');
+  var reader = new FileReader();
+  reader.onload = async function(e) {
+    var media = e.target.result.split(',')[1];
+    var res = await apiKey('POST', '/instances/' + currentInstance.name + '/send/media', { number: number, media: media, mimetype: file.type, filename: file.name, caption: caption });
+    if (res.error) toast(res.error, 'error');
+    else toast('Imagem enviada!');
+  };
+  reader.readAsDataURL(file);
+}
+
+async function sendAudio() {
+  var number = document.getElementById('audio-number').value.trim();
+  var file = document.getElementById('audio-file').files[0];
+  if (!number || !file) return toast('Preencha todos os campos', 'error');
+  var reader = new FileReader();
+  reader.onload = async function(e) {
+    var media = e.target.result.split(',')[1];
+    var res = await apiKey('POST', '/instances/' + currentInstance.name + '/send/media', { number: number, media: media, mimetype: file.type, filename: file.name, type: 'audio' });
+    if (res.error) toast(res.error, 'error');
+    else toast('Áudio enviado!');
+  };
+  reader.readAsDataURL(file);
+}
+
+function switchTab(name, btn) {
+  document.querySelectorAll('#screen-instance > div.p-8 > div.flex > .tab').forEach(function(t) { t.classList.remove('active'); });
+  document.querySelectorAll('#tab-dashboard, #tab-send').forEach(function(t) { t.classList.remove('active'); });
+  document.getElementById('tab-' + name).classList.add('active');
+  if (btn) btn.classList.add('active');
+}
+
+function switchSendTab(name, btn) {
+  document.querySelectorAll('#tab-send .tab').forEach(function(t) { t.classList.remove('active'); });
+  document.querySelectorAll('#send-text, #send-image, #send-audio').forEach(function(t) { t.classList.remove('active'); });
+  document.getElementById('send-' + name).classList.add('active');
+  if (btn) btn.classList.add('active');
+}
+
+function showDocs() {
+  document.getElementById('view-instances').style.display = 'none';
+  document.getElementById('view-docs').style.display = 'block';
+  renderDocs();
+}
+
+function hideDocs() {
+  document.getElementById('view-docs').style.display = 'none';
+  document.getElementById('view-instances').style.display = 'block';
+}
+
+function toggleEndpoint(header) {
+  var body = header.nextElementSibling;
+  var chevron = header.querySelector('.chevron');
+  body.classList.toggle('open');
+  chevron.classList.toggle('open');
+}
+
+function copyCode(btn, text) {
+  navigator.clipboard.writeText(text);
+  btn.textContent = '✓';
+  setTimeout(function() { btn.textContent = 'Copiar'; }, 2000);
+}
+
+function renderDocs() {
+  document.getElementById('docs-content').innerHTML = `<div class="space-y-6"><div class="card"><h3 class="font-bold mb-2 green">API Multi-Instância</h3><p class="text-slate-400 text-sm">Documentação completa disponível em breve.</p></div></div>`;
+}
+
+function toast(msg, type) {
+  var el = document.getElementById('toast');
+  var div = document.createElement('div');
+  div.className = 'toast-msg' + (type === 'error' ? ' toast-error' : '');
+  div.textContent = msg;
+  el.appendChild(div);
+  setTimeout(function() { div.remove(); }, 3500);
+}
+
+document.getElementById('login-pass').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') doLogin();
+});
+
+if (token) {
+  fetch(API + '/auth/me', { headers: { Authorization: 'Bearer ' + token } })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.username) {
+        document.getElementById('nav-user').textContent = data.username;
+        showScreen('instances');
+        loadInstances();
+      } else {
+        showScreen('login');
+      }
+    }).catch(function() { showScreen('login'); });
+} else {
+  showScreen('login');
+}
+</script>
+</body>
+</html>

@@ -286,7 +286,7 @@
 </div>
 
 <script>
-const API = 'http://localhost:8080';
+const API = window.location.origin;
 let token = localStorage.getItem('wapi_token');
 let currentInstance = null;
 let sseSource = null;

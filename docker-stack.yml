@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: wapi
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wapi123}
+      POSTGRES_DB: wapi
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - wapi-internal
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+  redis:
+    image: redis:7-alpine
+    networks:
+      - wapi-internal
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+  whisper:
+    image: br6unoc/wapi-whisper:latest
+    networks:
+      - wapi-internal
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+  app:
+    image: br6unoc/wapi:latest
+    environment:
+      PORT: 8080
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: wapi
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wapi123}
+      POSTGRES_DB: wapi
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      WHISPER_URL: http://whisper:9000
+      JWT_SECRET: ${JWT_SECRET}
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+    volumes:
+      - sessions_data:/app/sessions
+    networks:
+      - wapi-internal
+      - traefik-public
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=traefik-public
+        - traefik.http.routers.wapi.rule=Host(`${DOMAIN}`)
+        - traefik.http.routers.wapi.entrypoints=websecure
+        - traefik.http.routers.wapi.tls=true
+        - traefik.http.routers.wapi.tls.certresolver=letsencrypt
+        - traefik.http.services.wapi.loadbalancer.server.port=8080
+
+volumes:
+  postgres_data:
+  sessions_data:
+
+networks:
+  wapi-internal:
+    driver: overlay
+  traefik-public:
+    external: true

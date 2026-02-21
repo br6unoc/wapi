@@ -642,98 +642,7 @@ function copyCode(btn, text) {
 function renderDocs() {
   document.getElementById('docs-content').innerHTML = `
     <div class="space-y-4">
-      <div class="endpoint-card">
-        <div class="endpoint-header" onclick="toggleEndpoint(this)">
-          <span class="method post">POST</span>
-          <span class="font-semibold">/instances</span>
-          <span class="text-slate-400 text-sm ml-2">Criar nova instância</span>
-          <span class="chevron">▼</span>
-        </div>
-        <div class="endpoint-body">
-          <div class="badge-auth">🔐 Requer <span>JWT Token</span></div>
-          <table class="param-table">
-            <tr><th>Parâmetro</th><th>Tipo</th><th>Obrigatório</th><th>Descrição</th></tr>
-            <tr><td class="param-name">name</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Nome único da instância</td></tr>
-          </table>
-          <div class="code-block">
-            <button class="copy-btn" onclick="copyCode(this, 'curl -X POST ' + API + '/instances -H \\'Authorization: Bearer TOKEN\\' -H \\'Content-Type: application/json\\' -d \\'{&quot;name&quot;:&quot;minha-instancia&quot;}\\')">Copiar</button>
-            <pre>curl -X POST ${API}/instances \\
-  -H "Authorization: Bearer TOKEN" \\
-  -H "Content-Type: application/json" \\
-  -d '{"name":"minha-instancia"}'</pre>
-          </div>
-        </div>
-      </div>
-
-      <div class="endpoint-card">
-        <div class="endpoint-header" onclick="toggleEndpoint(this)">
-          <span class="method post">POST</span>
-          <span class="font-semibold">/instances/:name/send/text</span>
-          <span class="text-slate-400 text-sm ml-2">Enviar mensagem de texto</span>
-          <span class="chevron">▼</span>
-        </div>
-        <div class="endpoint-body">
-          <div class="badge-auth">🔑 Requer <span>API Key</span></div>
-          <table class="param-table">
-            <tr><th>Parâmetro</th><th>Tipo</th><th>Obrigatório</th><th>Descrição</th></tr>
-            <tr><td class="param-name">number</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Número com DDI (ex: 5511999999999)</td></tr>
-            <tr><td class="param-name">message</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Texto da mensagem</td></tr>
-          </table>
-          <div class="code-block">
-            <button class="copy-btn" onclick="copyCode(this, 'curl -X POST ' + API + '/instances/teste/send/text -H \\'apikey: SUA_CHAVE\\' -H \\'Content-Type: application/json\\' -d \\'{&quot;number&quot;:&quot;5511999999999&quot;,&quot;message&quot;:&quot;Olá!&quot;}\\')">Copiar</button>
-            <pre>curl -X POST ${API}/instances/teste/send/text \\
-  -H "apikey: SUA_CHAVE" \\
-  -H "Content-Type: application/json" \\
-  -d '{"number":"5511999999999","message":"Olá!"}'</pre>
-          </div>
-        </div>
-      </div>
-
-      <div class="endpoint-card">
-        <div class="endpoint-header" onclick="toggleEndpoint(this)">
-          <span class="method post">POST</span>
-          <span class="font-semibold">/instances/:name/send/media</span>
-          <span class="text-slate-400 text-sm ml-2">Enviar mídia (imagem/áudio/vídeo)</span>
-          <span class="chevron">▼</span>
-        </div>
-        <div class="endpoint-body">
-          <div class="badge-auth">🔑 Requer <span>API Key</span></div>
-          <table class="param-table">
-            <tr><th>Parâmetro</th><th>Tipo</th><th>Obrigatório</th><th>Descrição</th></tr>
-            <tr><td class="param-name">number</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Número com DDI</td></tr>
-            <tr><td class="param-name">media</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Base64 do arquivo</td></tr>
-            <tr><td class="param-name">mimetype</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Tipo MIME (ex: image/jpeg)</td></tr>
-            <tr><td class="param-name">filename</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Nome do arquivo</td></tr>
-            <tr><td class="param-name">caption</td><td class="param-type">string</td><td><span class="optional">NÃO</span></td><td>Legenda da mídia</td></tr>
-          </table>
-          <div class="code-block">
-            <button class="copy-btn" onclick="copyCode(this, 'curl -X POST ' + API + '/instances/teste/send/media -H \\'apikey: SUA_CHAVE\\' -H \\'Content-Type: application/json\\' -d \\'{&quot;number&quot;:&quot;5511999999999&quot;,&quot;media&quot;:&quot;BASE64...&quot;,&quot;mimetype&quot;:&quot;image/jpeg&quot;,&quot;filename&quot;:&quot;foto.jpg&quot;}\\')">Copiar</button>
-            <pre>curl -X POST ${API}/instances/teste/send/media \\
-  -H "apikey: SUA_CHAVE" \\
-  -H "Content-Type: application/json" \\
-  -d '{"number":"5511999999999","media":"BASE64...","mimetype":"image/jpeg","filename":"foto.jpg"}'</pre>
-          </div>
-        </div>
-      </div>
-
-      <div class="endpoint-card">
-        <div class="endpoint-header" onclick="toggleEndpoint(this)">
-          <span class="method get">GET</span>
-          <span class="font-semibold">/instances</span>
-          <span class="text-slate-400 text-sm ml-2">Listar todas as instâncias</span>
-          <span class="chevron">▼</span>
-        </div>
-        <div class="endpoint-body">
-          <div class="badge-auth">🔐 Requer <span>JWT Token</span></div>
-          <div class="code-block">
-            <button class="copy-btn" onclick="copyCode(this, 'curl -X GET ' + API + '/instances -H \\'Authorization: Bearer TOKEN\\'')">Copiar</button>
-            <pre>curl -X GET ${API}/instances \\
-  -H "Authorization: Bearer TOKEN"</pre>
-          </div>
-        </div>
-      </div>
-
-      <div class="endpoint-card">
+<div class="endpoint-card">
         <div class="endpoint-header" onclick="toggleEndpoint(this)">
           <span class="method delete">DELETE</span>
           <span class="font-semibold">/instances/:name</span>
@@ -747,6 +656,185 @@ function renderDocs() {
             <pre>curl -X DELETE ${API}/instances/teste \\
   -H "Authorization: Bearer TOKEN"</pre>
           </div>
+        </div>
+      </div>
+
+      <div class="endpoint-card">
+        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+          <span class="method post">POST</span>
+          <span class="font-semibold">/instances/:name/connect</span>
+          <span class="text-slate-400 text-sm ml-2">Conectar instância (gerar QR Code)</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="badge-auth">🔐 Requer <span>JWT Token</span></div>
+          <p class="text-slate-400 text-sm mb-2">Inicia o processo de conexão e gera um QR Code para escanear no WhatsApp.</p>
+          <div class="code-block">
+            <button class="copy-btn" onclick="copyCode(this, 'curl -X POST ' + API + '/instances/teste/connect -H \\'Authorization: Bearer TOKEN\\'')">Copiar</button>
+            <pre>curl -X POST ${API}/instances/teste/connect \\
+  -H "Authorization: Bearer TOKEN"</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="endpoint-card">
+        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+          <span class="method post">POST</span>
+          <span class="font-semibold">/instances/:name/disconnect</span>
+          <span class="text-slate-400 text-sm ml-2">Desconectar instância</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="badge-auth">🔐 Requer <span>JWT Token</span></div>
+          <div class="code-block">
+            <button class="copy-btn" onclick="copyCode(this, 'curl -X POST ' + API + '/instances/teste/disconnect -H \\'Authorization: Bearer TOKEN\\'')">Copiar</button>
+            <pre>curl -X POST ${API}/instances/teste/disconnect \\
+  -H "Authorization: Bearer TOKEN"</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="endpoint-card">
+        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+          <span class="method get">GET</span>
+          <span class="font-semibold">/instances/:name/qrcode</span>
+          <span class="text-slate-400 text-sm ml-2">Obter QR Code atual</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="badge-auth">🔐 Requer <span>JWT Token</span></div>
+          <p class="text-slate-400 text-sm mb-2">Retorna o QR Code atual se a instância estiver desconectada.</p>
+          <div class="code-block">
+            <button class="copy-btn" onclick="copyCode(this, 'curl -X GET ' + API + '/instances/teste/qrcode -H \\'Authorization: Bearer TOKEN\\'')">Copiar</button>
+            <pre>curl -X GET ${API}/instances/teste/qrcode \\
+  -H "Authorization: Bearer TOKEN"</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="endpoint-card">
+        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+          <span class="method get">GET</span>
+          <span class="font-semibold">/instances/:name/status</span>
+          <span class="text-slate-400 text-sm ml-2">Verificar status da conexão</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="badge-auth">🔐 Requer <span>JWT Token</span></div>
+          <div class="code-block">
+            <button class="copy-btn" onclick="copyCode(this, 'curl -X GET ' + API + '/instances/teste/status -H \\'Authorization: Bearer TOKEN\\'')">Copiar</button>
+            <pre>curl -X GET ${API}/instances/teste/status \\
+  -H "Authorization: Bearer TOKEN"</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="endpoint-card">
+        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+          <span class="method sse">SSE</span>
+          <span class="font-semibold">/instances/:name/sse</span>
+          <span class="text-slate-400 text-sm ml-2">Server-Sent Events (tempo real)</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="badge-auth">🔐 Requer <span>JWT Token</span></div>
+          <p class="text-slate-400 text-sm mb-2">Recebe eventos em tempo real: QR Code, conexão, mensagens.</p>
+          <table class="param-table">
+            <tr><th>Evento</th><th>Descrição</th></tr>
+            <tr><td class="param-name">qr</td><td>Novo QR Code gerado</td></tr>
+            <tr><td class="param-name">connected</td><td>WhatsApp conectado</td></tr>
+            <tr><td class="param-name">disconnected</td><td>WhatsApp desconectado</td></tr>
+            <tr><td class="param-name">message</td><td>Nova mensagem recebida</td></tr>
+          </table>
+          <div class="code-block">
+            <button class="copy-btn" onclick="copyCode(this, 'const eventSource = new EventSource(\\'' + API + '/instances/teste/sse\\');\\neventSource.onmessage = (e) => console.log(JSON.parse(e.data));')">Copiar</button>
+            <pre>const eventSource = new EventSource('${API}/instances/teste/sse');
+eventSource.onmessage = (e) => console.log(JSON.parse(e.data));</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="endpoint-card">
+        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+          <span class="method patch">PATCH</span>
+          <span class="font-semibold">/instances/:name/webhook</span>
+          <span class="text-slate-400 text-sm ml-2">Configurar webhook</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="badge-auth">🔐 Requer <span>JWT Token</span></div>
+          <table class="param-table">
+            <tr><th>Parâmetro</th><th>Tipo</th><th>Obrigatório</th><th>Descrição</th></tr>
+            <tr><td class="param-name">webhook_url</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>URL que receberá os eventos</td></tr>
+          </table>
+          <div class="code-block">
+            <button class="copy-btn" onclick="copyCode(this, 'curl -X PATCH ' + API + '/instances/teste/webhook -H \\'Authorization: Bearer TOKEN\\' -H \\'Content-Type: application/json\\' -d \\'{&quot;webhook_url&quot;:&quot;https://meusite.com/webhook&quot;}\\')">Copiar</button>
+            <pre>curl -X PATCH ${API}/instances/teste/webhook \\
+  -H "Authorization: Bearer TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"webhook_url":"https://meusite.com/webhook"}'</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="endpoint-card">
+        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+          <span class="method post">POST</span>
+          <span class="font-semibold">/instances/:name/apikey</span>
+          <span class="text-slate-400 text-sm ml-2">Gerar nova API Key</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="badge-auth">🔐 Requer <span>JWT Token</span></div>
+          <p class="text-slate-400 text-sm mb-2">Gera uma nova API Key para a instância. A antiga será invalidada.</p>
+          <div class="code-block">
+            <button class="copy-btn" onclick="copyCode(this, 'curl -X POST ' + API + '/instances/teste/apikey -H \\'Authorization: Bearer TOKEN\\'')">Copiar</button>
+            <pre>curl -X POST ${API}/instances/teste/apikey \\
+  -H "Authorization: Bearer TOKEN"</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="endpoint-card">
+        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+          <span class="method patch">PATCH</span>
+          <span class="font-semibold">/instances/:name/config</span>
+          <span class="text-slate-400 text-sm ml-2">Atualizar configurações</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="badge-auth">🔐 Requer <span>JWT Token</span></div>
+          <table class="param-table">
+            <tr><th>Parâmetro</th><th>Tipo</th><th>Descrição</th></tr>
+            <tr><td class="param-name">transcription_enabled</td><td class="param-type">boolean</td><td>Ativar/desativar transcrição de áudio</td></tr>
+          </table>
+          <div class="code-block">
+            <button class="copy-btn" onclick="copyCode(this, 'curl -X PATCH ' + API + '/instances/teste/config -H \\'Authorization: Bearer TOKEN\\' -H \\'Content-Type: application/json\\' -d \\'{&quot;transcription_enabled&quot;:true}\\')">Copiar</button>
+            <pre>curl -X PATCH ${API}/instances/teste/config \\
+  -H "Authorization: Bearer TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"transcription_enabled":true}'</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="card mt-6">
+        <h3 class="font-bold mb-3 green">📡 Webhook - Recebendo Mensagens</h3>
+        <p class="text-slate-400 text-sm mb-3">Configure uma URL de webhook para receber mensagens em tempo real. O WAPI enviará um POST para sua URL com o seguinte formato:</p>
+        <div class="code-block">
+          <pre>{
+  "event": "messages.upsert",
+  "instance": "teste",
+  "data": {
+    "from": "5511999999999",
+    "pushName": "João Silva",
+    "message": "Olá!",
+    "type": "text",
+    "timestamp": "2026-02-21T10:00:00-03:00",
+    "messageId": "3A...",
+    "transcription": "texto transcrito (apenas para áudios)"
+  }
+}</pre>
         </div>
       </div>
     </div>

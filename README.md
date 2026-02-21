@@ -2,20 +2,19 @@
 
 API REST multi-instância para integração com WhatsApp via whatsmeow. Suporte a múltiplos números simultâneos, cada um com sua própria API Key, webhook e configurações independentes.
 
-> **⚠️ PRÉ-REQUISITOS OBRIGATÓRIOS**  
-> Este instalador foi desenvolvido para funcionar com o **[SetupOrion](https://github.com/oriondesign2015/SetupOrion)**.  
+> **⚠️ PRÉ-REQUISITOS**  
 > Você **PRECISA** ter os seguintes serviços rodando no Docker Swarm **ANTES** de instalar o WAPI:
 > 
-> - ✅ **Traefik** — Proxy reverso com SSL automático
-> - ✅ **Portainer** — Gerenciamento de containers
-> - ✅ **PostgreSQL** — Banco de dados global compartilhado
-> - ✅ **Redis** — Cache global compartilhado
+> - ✅ **Docker Swarm** ativo
+> - ✅ **Traefik** (proxy reverso + SSL)
+> - ✅ **Portainer** (gerenciamento de containers)
+> - ✅ **PostgreSQL** (banco de dados)
+> - ✅ **Redis** (cache)
 > 
-> **Se você ainda NÃO tem esses serviços**, instale primeiro usando o SetupOrion:
+> **Recomendação:** Use o [SetupOrion](https://github.com/oriondesign2015/SetupOrion) para instalar esses serviços facilmente:
 > ```bash
 > bash <(curl -sSL setup.oriondesign.art.br)
 > ```
-> Depois instale pelo menos: Traefik, Portainer, PostgreSQL e Redis.
 
 ## ✨ Funcionalidades
 
@@ -26,36 +25,23 @@ API REST multi-instância para integração com WhatsApp via whatsmeow. Suporte 
 - 🎙️ **Transcrição de áudio** — Whisper.cpp integrado (~6 segundos)
 - 🔑 **API Key individual** — Cada instância tem sua própria chave
 - ⚡ **SSE** — Server-Sent Events para atualizações em tempo real
-- 🐳 **Docker Swarm** — Compatível com SetupOrion
+- 🐳 **Docker Swarm** — Deploy simplificado
 
 ## 🚀 Instalação
 
-### 1. Clone o repositório
+Execute os comandos abaixo na sua VPS:
 ```bash
 git clone https://github.com/br6unoc/wapi.git
 cd wapi
-```
-
-### 2. Execute o instalador
-```bash
-chmod +x install.sh
 ./install.sh
 ```
-
-### 3. Responda as perguntas
 
 O instalador vai perguntar:
 - **Domínio** (ex: `wapi.seudominio.com`)
 - **Usuário admin** (padrão: `admin`)
-- **Senha do admin** (será gerada automaticamente se vazio)
-- **Nome da rede do Traefik** (padrão: `traefik-public`)
-- **Nome do certresolver** (padrão: `letsencrypt`)
+- **Senha do admin** (será gerada automaticamente se deixar vazio)
 
-### 4. Aguarde ~30 segundos
-
-O sistema será instalado automaticamente!
-
-Acesse: `https://seudominio.com` e faça login com as credenciais exibidas.
+Aguarde ~40 segundos e acesse: `https://seudominio.com`
 
 ## 📚 Documentação da API
 
@@ -129,12 +115,12 @@ Configure a URL do webhook no painel. Formato do evento:
 
 ## 🏗️ Arquitetura
 
-O WAPI usa a infraestrutura compartilhada do SetupOrion:
+O WAPI usa a infraestrutura compartilhada do Docker Swarm:
 ```
 WAPI Stack
 ├── wapi_app (Go + Gin)
-│   ├── Conecta: postgres_postgres (global)
-│   ├── Conecta: redis_redis (global)
+│   ├── Conecta: PostgreSQL global
+│   ├── Conecta: Redis global
 │   └── Exposto: Traefik (SSL automático)
 │
 └── wapi_whisper (Whisper.cpp)
@@ -165,7 +151,7 @@ docker stack rm wapi
 
 ## 🔒 Segurança
 
-- ⚠️ Sempre use HTTPS em produção (Traefik configura automaticamente)
+- ⚠️ **Configure o Cloudflare** em modo SSL/TLS "Full" (não "Flexible")
 - 🔐 Troque as senhas padrão
 - 🔑 Mantenha as API Keys seguras
 - 📝 Revise logs regularmente
@@ -189,7 +175,7 @@ MIT License - veja [LICENSE](LICENSE) para mais detalhes.
 - [whatsmeow](https://github.com/tulir/whatsmeow) - Cliente WhatsApp
 - [Whisper.cpp](https://github.com/ggerganov/whisper.cpp) - Transcrição de áudio
 - [Gin](https://github.com/gin-gonic/gin) - Framework web
-- [SetupOrion](https://github.com/oriondesign2015/SetupOrion) - Infraestrutura base
+- [SetupOrion](https://github.com/oriondesign2015/SetupOrion) - Infraestrutura recomendada
 
 ## 📞 Suporte
 
@@ -197,5 +183,4 @@ Para reportar bugs ou solicitar features, abra uma [issue](https://github.com/br
 
 ---
 
-**Compatível com SetupOrion v2.8+**  
 Desenvolvido com ❤️ por [br6unoc](https://github.com/br6unoc)

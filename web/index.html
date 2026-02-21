@@ -644,6 +644,114 @@ function renderDocs() {
     <div class="space-y-4">
 <div class="endpoint-card">
         <div class="endpoint-header" onclick="toggleEndpoint(this)">
+          <span class="method post">POST</span>
+          <span class="font-semibold">/instances</span>
+          <span class="text-slate-400 text-sm ml-2">Criar nova instância</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="badge-auth">🔐 Requer <span>JWT Token</span></div>
+          <table class="param-table">
+            <tr><th>Parâmetro</th><th>Tipo</th><th>Obrigatório</th><th>Descrição</th></tr>
+            <tr><td class="param-name">name</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Nome único da instância</td></tr>
+          </table>
+          <div class="code-block">
+            <button class="copy-btn" onclick="copyCode(this, 'curl -X POST ' + API + '/instances -H \\'Authorization: Bearer TOKEN\\' -H \\'Content-Type: application/json\\' -d \\'{&quot;name&quot;:&quot;minha-instancia&quot;}\\')">Copiar</button>
+            <pre>curl -X POST ${API}/instances \\
+  -H "Authorization: Bearer TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"name":"minha-instancia"}'</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="endpoint-card">
+        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+          <span class="method post">POST</span>
+          <span class="font-semibold">/instances/:name/send/text</span>
+          <span class="text-slate-400 text-sm ml-2">Enviar mensagem de texto</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="badge-auth">🔑 Requer <span>API Key</span></div>
+          <table class="param-table">
+            <tr><th>Parâmetro</th><th>Tipo</th><th>Obrigatório</th><th>Descrição</th></tr>
+            <tr><td class="param-name">number</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Número com DDI (ex: 5511999999999)</td></tr>
+            <tr><td class="param-name">message</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Texto da mensagem</td></tr>
+          </table>
+          <div class="code-block">
+            <button class="copy-btn" onclick="copyCode(this, 'curl -X POST ' + API + '/instances/teste/send/text -H \\'apikey: SUA_CHAVE\\' -H \\'Content-Type: application/json\\' -d \\'{&quot;number&quot;:&quot;5511999999999&quot;,&quot;message&quot;:&quot;Olá!&quot;}\\')">Copiar</button>
+            <pre>curl -X POST ${API}/instances/teste/send/text \\
+  -H "apikey: SUA_CHAVE" \\
+  -H "Content-Type: application/json" \\
+  -d '{"number":"5511999999999","message":"Olá!"}'</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="endpoint-card">
+        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+          <span class="method post">POST</span>
+          <span class="font-semibold">/instances/:name/send/media</span>
+          <span class="text-slate-400 text-sm ml-2">Enviar mídia (imagem/áudio/vídeo)</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="badge-auth">🔑 Requer <span>API Key</span></div>
+          <table class="param-table">
+            <tr><th>Parâmetro</th><th>Tipo</th><th>Obrigatório</th><th>Descrição</th></tr>
+            <tr><td class="param-name">number</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Número com DDI</td></tr>
+            <tr><td class="param-name">media</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Base64 do arquivo</td></tr>
+            <tr><td class="param-name">mimetype</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Tipo MIME (ex: image/jpeg)</td></tr>
+            <tr><td class="param-name">filename</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Nome do arquivo</td></tr>
+            <tr><td class="param-name">caption</td><td class="param-type">string</td><td><span class="optional">NÃO</span></td><td>Legenda da mídia</td></tr>
+          </table>
+          <div class="code-block">
+            <button class="copy-btn" onclick="copyCode(this, 'curl -X POST ' + API + '/instances/teste/send/media -H \\'apikey: SUA_CHAVE\\' -H \\'Content-Type: application/json\\' -d \\'{&quot;number&quot;:&quot;5511999999999&quot;,&quot;media&quot;:&quot;BASE64...&quot;,&quot;mimetype&quot;:&quot;image/jpeg&quot;,&quot;filename&quot;:&quot;foto.jpg&quot;}\\')">Copiar</button>
+            <pre>curl -X POST ${API}/instances/teste/send/media \\
+  -H "apikey: SUA_CHAVE" \\
+  -H "Content-Type: application/json" \\
+  -d '{"number":"5511999999999","media":"BASE64...","mimetype":"image/jpeg","filename":"foto.jpg"}'</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="endpoint-card">
+        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+          <span class="method get">GET</span>
+          <span class="font-semibold">/instances</span>
+          <span class="text-slate-400 text-sm ml-2">Listar todas as instâncias</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="badge-auth">🔐 Requer <span>JWT Token</span></div>
+          <div class="code-block">
+            <button class="copy-btn" onclick="copyCode(this, 'curl -X GET ' + API + '/instances -H \\'Authorization: Bearer TOKEN\\'')">Copiar</button>
+            <pre>curl -X GET ${API}/instances \\
+  -H "Authorization: Bearer TOKEN"</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="endpoint-card">
+        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+          <span class="method delete">DELETE</span>
+          <span class="font-semibold">/instances/:name</span>
+          <span class="text-slate-400 text-sm ml-2">Deletar instância</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="badge-auth">🔐 Requer <span>JWT Token</span></div>
+          <div class="code-block">
+            <button class="copy-btn" onclick="copyCode(this, 'curl -X DELETE ' + API + '/instances/teste -H \\'Authorization: Bearer TOKEN\\'')">Copiar</button>
+            <pre>curl -X DELETE ${API}/instances/teste \\
+  -H "Authorization: Bearer TOKEN"</pre>
+          </div>
+        </div>
+      </div>
+
+<div class="endpoint-card">
+        <div class="endpoint-header" onclick="toggleEndpoint(this)">
           <span class="method delete">DELETE</span>
           <span class="font-semibold">/instances/:name</span>
           <span class="text-slate-400 text-sm ml-2">Deletar instância</span>

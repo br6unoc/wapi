@@ -341,14 +341,14 @@ async function loadInstances() {
         <div class="flex-1 min-w-0">
           <div class="font-bold text-lg mb-1">${inst.name}</div>
           ${inst.phone ? '<div class="text-slate-400 text-sm">📱 ' + inst.phone + '</div>' : '<div class="text-slate-500 text-sm">Não conectado</div>'}
+          ${inst.status === 'connected' ? '<div class="text-green-400 text-sm mt-1">● Conectado</div>' : '<div class="text-slate-500 text-sm mt-1">○ Desconectado</div>'}
         </div>
       </div>
-      <div class="flex gap-2">
-        ${inst.status === 'connected' 
-          ? '<span class="badge-connected flex-1 justify-center text-sm">● Conectado</span>' 
-     : '<button onclick="openInstance(\'${inst.name}\')" class="btn-green btn-sm flex-1 text-sm">Conectar</button>'}
-        <button onclick="event.stopPropagation(); deleteInstance('${inst.name}')" class="btn-red btn-sm text-sm">Excluir</button>
+      <div class="flex gap-2 mt-3">
+        <button onclick="openInstance('${inst.name}')" class="btn-green flex-1">Gerenciar</button>
+        <button onclick="event.stopPropagation(); deleteInstance('${inst.name}')" class="btn-red flex-1">Excluir</button>
       </div>
+    </div>
     </div>
   `).join('');
 }

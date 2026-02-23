@@ -249,7 +249,7 @@ func (inst *Instance) handleEvent(evt interface{}) {
 
 func (inst *Instance) processMessage(v *events.Message) {
 	msgData := map[string]interface{}{
-		"from":      strings.Split(v.Info.Sender.User, "@")[0],
+		"from":      strings.Split(v.Info.Chat.User, "@")[0],
 		"pushName":  v.Info.PushName,
 		"timestamp": v.Info.Timestamp.Format(time.RFC3339),
 		"messageId": v.Info.ID,

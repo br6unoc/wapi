@@ -92,26 +92,23 @@ func (m *Manager) Remove(id string) {
 
 func NewInstance(id, name, apiKey string) (*Instance, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-
 	client, err := whatsapp.NewClient(id)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("erro ao criar cliente whatsapp: %w", err)
 	}
-
 	inst := &Instance{
-		ID:             id,
-		Name:           name,
-		APIKey:         apiKey,
-		Status:         "disconnected",
-		TypingDelayMin: 1000,
-		TypingDelayMax: 3000,
-		WAClient:       client,
-		ctx:            ctx,
-		cancel:         cancel,
-		SSEClients:     make(map[chan string]struct{}),
+		ID:                   id,
+		Name:                 name,
+		APIKey:               apiKey,
+		Status:               "disconnected",
+		TypingDelayMin:       1000,
+		TypingDelayMax:       3000,
+		WAClient:             client,
+		ctx:                  ctx,
+		cancel:               cancel,
+		SSEClients:           make(map[chan string]struct{}),
 	}
-
 	return inst, nil
 }
 
@@ -119,29 +116,24 @@ func (inst *Instance) Connect() error {
 	if inst.WAClient != nil {
 		inst.WAClient.Disconnect()
 	}
-
 	inst.cancel()
 	ctx, cancel := context.WithCancel(context.Background())
 	inst.ctx = ctx
 	inst.cancel = cancel
 	inst.LastQR = ""
-
 	client, err := whatsapp.NewClient(inst.ID)
 	if err != nil {
 		return fmt.Errorf("erro ao recriar cliente: %w", err)
 	}
 	inst.WAClient = client
-
 	inst.WAClient.AddEventHandler(func(evt interface{}) {
 		inst.handleEvent(evt)
 	})
-
 	if inst.WAClient.Store.ID == nil {
 		qrChan, err := inst.WAClient.GetQRChannel(inst.ctx)
 		if err != nil {
 			return fmt.Errorf("erro ao obter canal QR: %w", err)
 		}
-
 		go func() {
 			for {
 				select {
@@ -158,16 +150,13 @@ func (inst *Instance) Connect() error {
 				}
 			}
 		}()
-
 		if err := inst.WAClient.Connect(); err != nil {
 			return fmt.Errorf("erro ao conectar: %w", err)
 		}
-
 	} else {
 		if err := inst.WAClient.Connect(); err != nil {
 			return fmt.Errorf("erro ao conectar: %w", err)
 		}
-
 		go func() {
 			time.Sleep(3 * time.Second)
 			if inst.WAClient.IsConnected() {
@@ -179,7 +168,6 @@ func (inst *Instance) Connect() error {
 			}
 		}()
 	}
-
 	go inst.keepAlive()
 	return nil
 }
@@ -193,7 +181,6 @@ func (inst *Instance) Disconnect() {
 	inst.Status = "disconnected"
 	inst.Phone = ""
 	inst.LastQR = ""
-
 	ctx, cancel := context.WithCancel(context.Background())
 	inst.ctx = ctx
 	inst.cancel = cancel
@@ -235,11 +222,9 @@ func (inst *Instance) handleEvent(evt interface{}) {
 			inst.Phone = inst.WAClient.Store.ID.User
 		}
 		inst.BroadcastSSE(`{"event":"connected","data":{"phone":"` + inst.Phone + `"}}`)
-
 	case *events.Disconnected:
 		inst.Status = "disconnected"
 		inst.BroadcastSSE(`{"event":"disconnected","data":{}}`)
-
 	case *events.Message:
 		if v.Info.IsFromMe {
 			return
@@ -249,29 +234,24 @@ func (inst *Instance) handleEvent(evt interface{}) {
 }
 
 func (inst *Instance) processMessage(v *events.Message) {
-	// Determinar se é grupo
 	isGroup := v.Info.Chat.Server == "g.us"
-
-	// Extrair remote_jid (onde a mensagem aconteceu)
 	remoteJID := v.Info.Chat.User
-
-	// Extrair sender_number com resolução de LID
 	var senderNumber string
+
+	// Lógica de resolução de LID para o número real
 	if v.Info.Sender.Server == "lid" {
-		// Para LID, tentar resolver via GetUserInfo
 		users, err := inst.WAClient.GetUserInfo(context.Background(), []types.JID{v.Info.Sender})
 		if err == nil && len(users) > 0 {
-			// GetUserInfo retorna map[JID]UserInfo - pegar o JID resolvido
 			for jid := range users {
-				senderNumber = jid.User
+				if !jid.IsEmpty() {
+					senderNumber = jid.User
+				}
 				break
 			}
 		}
-		// Se não resolveu, usar o LID mesmo como fallback
-		if senderNumber == "" {
-			senderNumber = v.Info.Sender.User
-		}
-	} else {
+	}
+	
+	if senderNumber == "" {
 		senderNumber = v.Info.Sender.ToNonAD().User
 	}
 
@@ -320,7 +300,6 @@ func (inst *Instance) processMessage(v *events.Message) {
 
 func (inst *Instance) processAudio(v *events.Message, msgData map[string]interface{}) {
 	audioMsg := v.Message.GetAudioMessage()
-
 	audioData, err := inst.WAClient.Download(context.Background(), audioMsg)
 	if err != nil {
 		fmt.Printf("[AUDIO] Erro ao baixar áudio: %v\n", err)
@@ -329,10 +308,8 @@ func (inst *Instance) processAudio(v *events.Message, msgData map[string]interfa
 		go inst.sendWebhook(msgData)
 		return
 	}
-
 	fmt.Printf("[AUDIO] Áudio baixado: %d bytes\n", len(audioData))
 	msgData["message"] = "[áudio]"
-
 	if inst.TranscriptionEnabled {
 		fmt.Printf("[AUDIO] Transcrevendo...\n")
 		text, err := transcriber.Transcribe(audioData, "audio.ogg")
@@ -344,7 +321,6 @@ func (inst *Instance) processAudio(v *events.Message, msgData map[string]interfa
 			msgData["transcription"] = text
 		}
 	}
-
 	inst.broadcastMessage(msgData)
 	go inst.sendWebhook(msgData)
 }
@@ -353,19 +329,16 @@ func (inst *Instance) sendWebhook(msgData map[string]interface{}) {
 	if inst.WebhookURL == "" {
 		return
 	}
-
 	payload := map[string]interface{}{
 		"instance":   inst.Name,
 		"instanceId": inst.ID,
 		"event":      "messages.upsert",
 		"data":       msgData,
 	}
-
 	jsonBytes, err := json.Marshal(payload)
 	if err != nil {
 		return
 	}
-
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Post(inst.WebhookURL, "application/json", bytes.NewReader(jsonBytes))
 	if err != nil {
@@ -381,12 +354,10 @@ func (inst *Instance) broadcastMessage(msgData map[string]interface{}) {
 		"event": "message",
 		"data":  msgData,
 	}
-
 	jsonBytes, err := json.Marshal(payload)
 	if err != nil {
 		return
 	}
-
 	inst.BroadcastSSE(string(jsonBytes))
 }
 

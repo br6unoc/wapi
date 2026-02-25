@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+        "log"
 	"net/http"
 	"sync"
 	"time"
@@ -248,13 +249,29 @@ func (inst *Instance) handleEvent(evt interface{}) {
 }
 
 func (inst *Instance) processMessage(v *events.Message) {
+	// Determinar se é grupo
+	isGroup := v.Info.Chat.Server == "g.us"
+	
+	// Extrair remote_jid (onde a mensagem aconteceu)
+	remoteJID := v.Info.Chat.User
+	
+	// Extrair sender_number (quem enviou)
+	var senderNumber string
+        // Para LID ou normal, usar ToNonAD
+        senderNumber = v.Info.Sender.ToNonAD().User
+
+	log.Printf("[MESSAGE] remote_jid=%s, sender=%s, isGroup=%v, pushName=%s",
+		remoteJID, senderNumber, isGroup, v.Info.PushName)
+
 	msgData := map[string]interface{}{
-		"from":      strings.Split(v.Info.Chat.User, "@")[0],
-		"pushName":  v.Info.PushName,
-		"timestamp": v.Info.Timestamp.Format(time.RFC3339),
-		"messageId": v.Info.ID,
-		"type":      "text",
-		"message":   "",
+		"remote_jid":    remoteJID,
+		"sender_number": senderNumber,
+		"is_group":      isGroup,
+		"pushName":      v.Info.PushName,
+		"timestamp":     v.Info.Timestamp.Format(time.RFC3339),
+		"messageId":     v.Info.ID,
+		"type":          "text",
+		"message":       "",
 	}
 
 	if v.Message.GetConversation() != "" {

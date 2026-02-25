@@ -7,6 +7,7 @@ import (
 	"wapi/internal/handler"
 	"wapi/internal/instance"
 	"wapi/store/postgres"
+        _ "github.com/lib/pq"
 
 	"github.com/gin-gonic/gin"
 )

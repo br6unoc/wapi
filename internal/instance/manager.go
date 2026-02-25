@@ -5,8 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 	"wapi/internal/transcriber"
@@ -71,11 +71,11 @@ func (m *Manager) GetByName(name string) (*Instance, bool) {
 func (m *Manager) GetAll() []*Instance {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	list := make([]*Instance, 0, len(m.instances))
+	all := make([]*Instance, 0, len(m.instances))
 	for _, inst := range m.instances {
-		list = append(list, inst)
+		all = append(all, inst)
 	}
-	return list
+	return all
 }
 
 func (m *Manager) Remove(id string) {
@@ -120,29 +120,22 @@ func (inst *Instance) Connect() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	inst.ctx = ctx
 	inst.cancel = cancel
-	inst.LastQR = ""
 	client, err := whatsapp.NewClient(inst.ID)
 	if err != nil {
-		return fmt.Errorf("erro ao recriar cliente: %w", err)
+		return err
 	}
 	inst.WAClient = client
-	inst.WAClient.AddEventHandler(func(evt interface{}) {
-		inst.handleEvent(evt)
-	})
+	inst.WAClient.AddEventHandler(inst.handleEvent)
+	
 	if inst.WAClient.Store.ID == nil {
-		qrChan, err := inst.WAClient.GetQRChannel(inst.ctx)
-		if err != nil {
-			return fmt.Errorf("erro ao obter canal QR: %w", err)
-		}
+		qrChan, _ := inst.WAClient.GetQRChannel(inst.ctx)
 		go func() {
 			for {
 				select {
 				case <-inst.ctx.Done():
 					return
 				case evt, ok := <-qrChan:
-					if !ok {
-						return
-					}
+					if !ok { return }
 					if evt.Event == "code" {
 						inst.LastQR = evt.Code
 						inst.BroadcastSSE(`{"event":"qr","data":{"qrcode":"` + evt.Code + `"}}`)
@@ -150,40 +143,19 @@ func (inst *Instance) Connect() error {
 				}
 			}
 		}()
-		if err := inst.WAClient.Connect(); err != nil {
-			return fmt.Errorf("erro ao conectar: %w", err)
-		}
-	} else {
-		if err := inst.WAClient.Connect(); err != nil {
-			return fmt.Errorf("erro ao conectar: %w", err)
-		}
-		go func() {
-			time.Sleep(3 * time.Second)
-			if inst.WAClient.IsConnected() {
-				inst.Status = "connected"
-				if inst.WAClient.Store.ID != nil {
-					inst.Phone = inst.WAClient.Store.ID.User
-				}
-				inst.BroadcastSSE(`{"event":"connected","data":{"phone":"` + inst.Phone + `"}}`)
-			}
-		}()
 	}
+	
+	err = inst.WAClient.Connect()
 	go inst.keepAlive()
-	return nil
+	return err
 }
 
 func (inst *Instance) Disconnect() {
 	inst.cancel()
 	if inst.WAClient != nil {
-		inst.WAClient.Logout(context.Background())
 		inst.WAClient.Disconnect()
 	}
 	inst.Status = "disconnected"
-	inst.Phone = ""
-	inst.LastQR = ""
-	ctx, cancel := context.WithCancel(context.Background())
-	inst.ctx = ctx
-	inst.cancel = cancel
 }
 
 func (inst *Instance) keepAlive() {
@@ -201,12 +173,6 @@ func (inst *Instance) keepAlive() {
 					if inst.WAClient.Store.ID != nil {
 						inst.Phone = inst.WAClient.Store.ID.User
 					}
-					inst.BroadcastSSE(`{"event":"connected","data":{"phone":"` + inst.Phone + `"}}`)
-				}
-			} else {
-				if inst.Status == "connected" {
-					inst.Status = "disconnected"
-					inst.BroadcastSSE(`{"event":"disconnected","data":{}}`)
 				}
 			}
 		}
@@ -217,14 +183,9 @@ func (inst *Instance) handleEvent(evt interface{}) {
 	switch v := evt.(type) {
 	case *events.Connected:
 		inst.Status = "connected"
-		inst.LastQR = ""
 		if inst.WAClient.Store.ID != nil {
 			inst.Phone = inst.WAClient.Store.ID.User
 		}
-		inst.BroadcastSSE(`{"event":"connected","data":{"phone":"` + inst.Phone + `"}}`)
-	case *events.Disconnected:
-		inst.Status = "disconnected"
-		inst.BroadcastSSE(`{"event":"disconnected","data":{}}`)
 	case *events.Message:
 		if v.Info.IsFromMe {
 			return
@@ -235,34 +196,35 @@ func (inst *Instance) handleEvent(evt interface{}) {
 
 func (inst *Instance) processMessage(v *events.Message) {
 	isGroup := v.Info.Chat.Server == "g.us"
-	remoteJID := v.Info.Chat.User
-	var senderNumber string
+	remoteJID := v.Info.Chat.String()
+	
+	sender := v.Info.Sender
+	senderNumber := sender.User 
 
-	// Lógica de resolução de LID para o número real
-	if v.Info.Sender.Server == "lid" {
-		users, err := inst.WAClient.GetUserInfo(context.Background(), []types.JID{v.Info.Sender})
-		if err == nil && len(users) > 0 {
-			for jid := range users {
-				if !jid.IsEmpty() {
-					senderNumber = jid.User
+	// APLICAÇÃO DA SOLUÇÃO DE EXTRAÇÃO VIA DEVICES/USERINFO
+	if sender.Server == "lid" {
+		// 1. Pega os dispositivos vinculados ao remetente (LID)
+		devices, err := inst.WAClient.GetUserDevices(context.Background(), []types.JID{sender})
+		if err == nil && len(devices) > 0 {
+			// 2. Busca as informações detalhadas desses dispositivos
+			userInfo, err := inst.WAClient.GetUserInfo(context.Background(), devices)
+			if err == nil && len(userInfo) > 0 {
+				for jid := range userInfo {
+					// 3. Procura por qualquer JID que seja do servidor padrão (número real)
+					if jid.Server == "s.whatsapp.net" {
+						senderNumber = strings.Split(jid.String(), "@")[0]
+						break
+					}
 				}
-				break
 			}
 		}
 	}
-	
-	if senderNumber == "" {
-		senderNumber = v.Info.Sender.ToNonAD().User
-	}
-
-	log.Printf("[MESSAGE] remote_jid=%s, sender=%s, isGroup=%v, pushName=%s",
-		remoteJID, senderNumber, isGroup, v.Info.PushName)
 
 	msgData := map[string]interface{}{
 		"remote_jid":    remoteJID,
 		"sender_number": senderNumber,
-		"is_group":      isGroup,
 		"pushName":      v.Info.PushName,
+		"is_group":      isGroup,
 		"timestamp":     v.Info.Timestamp.Format(time.RFC3339),
 		"messageId":     v.Info.ID,
 		"type":          "text",
@@ -271,13 +233,10 @@ func (inst *Instance) processMessage(v *events.Message) {
 
 	if v.Message.GetConversation() != "" {
 		msgData["message"] = v.Message.GetConversation()
-		msgData["type"] = "text"
 	} else if v.Message.GetExtendedTextMessage() != nil {
 		msgData["message"] = v.Message.GetExtendedTextMessage().GetText()
-		msgData["type"] = "text"
 	} else if v.Message.GetImageMessage() != nil {
 		msgData["message"] = "[imagem]"
-		msgData["type"] = "image"
 		if v.Message.GetImageMessage().GetCaption() != "" {
 			msgData["message"] = v.Message.GetImageMessage().GetCaption()
 		}
@@ -286,12 +245,6 @@ func (inst *Instance) processMessage(v *events.Message) {
 		msgData["type"] = "audio"
 		go inst.processAudio(v, msgData)
 		return
-	} else if v.Message.GetDocumentMessage() != nil {
-		msgData["message"] = v.Message.GetDocumentMessage().GetFileName()
-		msgData["type"] = "document"
-	} else {
-		msgData["message"] = "[mensagem não suportada]"
-		msgData["type"] = "unknown"
 	}
 
 	inst.broadcastMessage(msgData)
@@ -302,62 +255,33 @@ func (inst *Instance) processAudio(v *events.Message, msgData map[string]interfa
 	audioMsg := v.Message.GetAudioMessage()
 	audioData, err := inst.WAClient.Download(context.Background(), audioMsg)
 	if err != nil {
-		fmt.Printf("[AUDIO] Erro ao baixar áudio: %v\n", err)
-		msgData["transcription"] = ""
 		inst.broadcastMessage(msgData)
 		go inst.sendWebhook(msgData)
 		return
 	}
-	fmt.Printf("[AUDIO] Áudio baixado: %d bytes\n", len(audioData))
-	msgData["message"] = "[áudio]"
 	if inst.TranscriptionEnabled {
-		fmt.Printf("[AUDIO] Transcrevendo...\n")
-		text, err := transcriber.Transcribe(audioData, "audio.ogg")
-		if err != nil {
-			fmt.Printf("[AUDIO] Erro na transcrição: %v\n", err)
-			msgData["transcription"] = ""
-		} else {
-			fmt.Printf("[AUDIO] Transcrição: %s\n", text)
-			msgData["transcription"] = text
-		}
+		text, _ := transcriber.Transcribe(audioData, "audio.ogg")
+		msgData["transcription"] = text
 	}
 	inst.broadcastMessage(msgData)
 	go inst.sendWebhook(msgData)
 }
 
 func (inst *Instance) sendWebhook(msgData map[string]interface{}) {
-	if inst.WebhookURL == "" {
-		return
-	}
+	if inst.WebhookURL == "" { return }
 	payload := map[string]interface{}{
 		"instance":   inst.Name,
 		"instanceId": inst.ID,
 		"event":      "messages.upsert",
 		"data":       msgData,
 	}
-	jsonBytes, err := json.Marshal(payload)
-	if err != nil {
-		return
-	}
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Post(inst.WebhookURL, "application/json", bytes.NewReader(jsonBytes))
-	if err != nil {
-		fmt.Printf("[WEBHOOK] Erro: %v\n", err)
-		return
-	}
-	defer resp.Body.Close()
-	fmt.Printf("[WEBHOOK] Enviado — status: %d\n", resp.StatusCode)
+	jsonBytes, _ := json.Marshal(payload)
+	http.Post(inst.WebhookURL, "application/json", bytes.NewReader(jsonBytes))
 }
 
 func (inst *Instance) broadcastMessage(msgData map[string]interface{}) {
-	payload := map[string]interface{}{
-		"event": "message",
-		"data":  msgData,
-	}
-	jsonBytes, err := json.Marshal(payload)
-	if err != nil {
-		return
-	}
+	payload := map[string]interface{}{"event": "message", "data": msgData}
+	jsonBytes, _ := json.Marshal(payload)
 	inst.BroadcastSSE(string(jsonBytes))
 }
 

@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-        "log"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -251,14 +251,29 @@ func (inst *Instance) handleEvent(evt interface{}) {
 func (inst *Instance) processMessage(v *events.Message) {
 	// Determinar se é grupo
 	isGroup := v.Info.Chat.Server == "g.us"
-	
+
 	// Extrair remote_jid (onde a mensagem aconteceu)
 	remoteJID := v.Info.Chat.User
-	
-	// Extrair sender_number (quem enviou)
+
+	// Extrair sender_number com resolução de LID
 	var senderNumber string
-        // Para LID ou normal, usar ToNonAD
-        senderNumber = v.Info.Sender.ToNonAD().User
+	if v.Info.Sender.Server == "lid" {
+		// Para LID, tentar resolver via GetUserInfo
+		users, err := inst.WAClient.GetUserInfo(context.Background(), []types.JID{v.Info.Sender})
+		if err == nil && len(users) > 0 {
+			// GetUserInfo retorna map[JID]UserInfo - pegar o JID resolvido
+			for jid := range users {
+				senderNumber = jid.User
+				break
+			}
+		}
+		// Se não resolveu, usar o LID mesmo como fallback
+		if senderNumber == "" {
+			senderNumber = v.Info.Sender.User
+		}
+	} else {
+		senderNumber = v.Info.Sender.ToNonAD().User
+	}
 
 	log.Printf("[MESSAGE] remote_jid=%s, sender=%s, isGroup=%v, pushName=%s",
 		remoteJID, senderNumber, isGroup, v.Info.PushName)

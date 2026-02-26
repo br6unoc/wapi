@@ -108,6 +108,7 @@ func NewInstance(id, name, apiKey string) (*Instance, error) {
 		TypingDelayMax: 3000,
 		WAClient:       client,
 		Container:      container,
+                TranscriptionEnabled: true,
 		ctx:            ctx,
 		cancel:         cancel,
 		SSEClients:     make(map[chan string]struct{}),

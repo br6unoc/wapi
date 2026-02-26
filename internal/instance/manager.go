@@ -5,14 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 	"wapi/internal/transcriber"
 	"wapi/internal/whatsapp"
 
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
@@ -29,6 +30,7 @@ type Instance struct {
 	Phone                string
 	LastQR               string
 	WAClient             *whatsmeow.Client
+	Container            *sqlstore.Container
 	ctx                  context.Context
 	cancel               context.CancelFunc
 	SSEClients           map[chan string]struct{}
@@ -92,22 +94,23 @@ func (m *Manager) Remove(id string) {
 
 func NewInstance(id, name, apiKey string) (*Instance, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	client, err := whatsapp.NewClient(id)
+	client, container, err := whatsapp.NewClient(id)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("erro ao criar cliente whatsapp: %w", err)
 	}
 	inst := &Instance{
-		ID:                   id,
-		Name:                 name,
-		APIKey:               apiKey,
-		Status:               "disconnected",
-		TypingDelayMin:       1000,
-		TypingDelayMax:       3000,
-		WAClient:             client,
-		ctx:                  ctx,
-		cancel:               cancel,
-		SSEClients:           make(map[chan string]struct{}),
+		ID:             id,
+		Name:           name,
+		APIKey:         apiKey,
+		Status:         "disconnected",
+		TypingDelayMin: 1000,
+		TypingDelayMax: 3000,
+		WAClient:       client,
+		Container:      container,
+		ctx:            ctx,
+		cancel:         cancel,
+		SSEClients:     make(map[chan string]struct{}),
 	}
 	return inst, nil
 }
@@ -120,13 +123,15 @@ func (inst *Instance) Connect() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	inst.ctx = ctx
 	inst.cancel = cancel
-	client, err := whatsapp.NewClient(inst.ID)
+	
+	client, container, err := whatsapp.NewClient(inst.ID)
 	if err != nil {
 		return err
 	}
 	inst.WAClient = client
+	inst.Container = container
 	inst.WAClient.AddEventHandler(inst.handleEvent)
-	
+
 	if inst.WAClient.Store.ID == nil {
 		qrChan, _ := inst.WAClient.GetQRChannel(inst.ctx)
 		go func() {
@@ -135,7 +140,9 @@ func (inst *Instance) Connect() error {
 				case <-inst.ctx.Done():
 					return
 				case evt, ok := <-qrChan:
-					if !ok { return }
+					if !ok {
+						return
+					}
 					if evt.Event == "code" {
 						inst.LastQR = evt.Code
 						inst.BroadcastSSE(`{"event":"qr","data":{"qrcode":"` + evt.Code + `"}}`)
@@ -144,7 +151,7 @@ func (inst *Instance) Connect() error {
 			}
 		}()
 	}
-	
+
 	err = inst.WAClient.Connect()
 	go inst.keepAlive()
 	return err
@@ -196,29 +203,25 @@ func (inst *Instance) handleEvent(evt interface{}) {
 
 func (inst *Instance) processMessage(v *events.Message) {
 	isGroup := v.Info.Chat.Server == "g.us"
-	remoteJID := v.Info.Chat.String()
-	
-	sender := v.Info.Sender
-	senderNumber := sender.User 
+	remoteJID := v.Info.Chat.User
 
-	// APLICAÇÃO DA SOLUÇÃO DE EXTRAÇÃO VIA DEVICES/USERINFO
-	if sender.Server == "lid" {
-		// 1. Pega os dispositivos vinculados ao remetente (LID)
-		devices, err := inst.WAClient.GetUserDevices(context.Background(), []types.JID{sender})
-		if err == nil && len(devices) > 0 {
-			// 2. Busca as informações detalhadas desses dispositivos
-			userInfo, err := inst.WAClient.GetUserInfo(context.Background(), devices)
-			if err == nil && len(userInfo) > 0 {
-				for jid := range userInfo {
-					// 3. Procura por qualquer JID que seja do servidor padrão (número real)
-					if jid.Server == "s.whatsapp.net" {
-						senderNumber = strings.Split(jid.String(), "@")[0]
-						break
-					}
-				}
-			}
+	// Extrair sender_number com resolução de LID
+	var senderNumber string
+	if v.Info.Sender.Server == "lid" {
+		phoneJID, err := inst.Container.LIDMap.GetPNForLID(context.Background(), v.Info.Sender)
+		if err == nil && !phoneJID.IsEmpty() {
+			senderNumber = phoneJID.User
+			log.Printf("[LID RESOLVED] %s → %s", v.Info.Sender.User, phoneJID.User)
+		} else {
+			senderNumber = v.Info.Sender.User
+			log.Printf("[LID NOT FOUND] %s (erro: %v)", v.Info.Sender.User, err)
 		}
+	} else {
+		senderNumber = v.Info.Sender.ToNonAD().User
 	}
+
+	log.Printf("[MESSAGE] remote_jid=%s, sender=%s, isGroup=%v, pushName=%s",
+		remoteJID, senderNumber, isGroup, v.Info.PushName)
 
 	msgData := map[string]interface{}{
 		"remote_jid":    remoteJID,
@@ -268,7 +271,9 @@ func (inst *Instance) processAudio(v *events.Message, msgData map[string]interfa
 }
 
 func (inst *Instance) sendWebhook(msgData map[string]interface{}) {
-	if inst.WebhookURL == "" { return }
+	if inst.WebhookURL == "" {
+		return
+	}
 	payload := map[string]interface{}{
 		"instance":   inst.Name,
 		"instanceId": inst.ID,

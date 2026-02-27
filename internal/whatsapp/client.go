@@ -35,9 +35,14 @@ func NewClient(instanceID string) (*whatsmeow.Client, *sqlstore.Container, error
 		return nil, nil, fmt.Errorf("erro ao criar store postgres: %w", err)
 	}
 
-	device, err := container.GetFirstDevice(context.Background())
-	if err != nil {
-		return nil, nil, fmt.Errorf("erro ao obter device: %w", err)
+	// Buscar device por JID se existir registro para esta instância
+	// O instanceID será usado como User do JID
+	jid := types.NewJID(instanceID, types.DefaultUserServer)
+	
+	device, err := container.GetDevice(context.Background(), jid)
+	if err != nil || device == nil {
+		// Device não existe ou erro - criar novo
+		device = container.NewDevice()
 	}
 
 	client := whatsmeow.NewClient(device, waLog.Noop)

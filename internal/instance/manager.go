@@ -150,6 +150,17 @@ func (inst *Instance) Connect() error {
 					}
 				}
 			}
+        // Verificar status após Connect
+        go func() {
+                time.Sleep(3 * time.Second)
+                if inst.WAClient.IsConnected() {
+                        inst.Status = "connected"
+                        if inst.WAClient.Store.ID != nil {
+                                inst.Phone = inst.WAClient.Store.ID.User
+                        }
+                        log.Printf("[CONNECT] Instance %s connected - Phone: %s", inst.Name, inst.Phone)
+                }
+        }()
 		}()
 	}
 

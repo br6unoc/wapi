@@ -11,6 +11,7 @@ import (
 	"time"
 	"wapi/internal/transcriber"
 	"wapi/internal/whatsapp"
+	"wapi/store/postgres"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -116,6 +117,13 @@ func NewInstance(id, name, apiKey string) (*Instance, error) {
 	return inst, nil
 }
 
+// Helper: salvar status no banco de dados
+func (inst *Instance) saveStatusToDB() {
+	postgres.DB.Exec(`UPDATE instances SET status = $1, phone = $2 WHERE id = $3`,
+		inst.Status, inst.Phone, inst.ID)
+	log.Printf("[DB] Instance %s status saved: %s, phone: %s", inst.Name, inst.Status, inst.Phone)
+}
+
 func (inst *Instance) Connect() error {
 	if inst.WAClient != nil {
 		inst.WAClient.Disconnect()
@@ -124,7 +132,7 @@ func (inst *Instance) Connect() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	inst.ctx = ctx
 	inst.cancel = cancel
-	
+
 	client, container, err := whatsapp.NewClient(inst.ID)
 	if err != nil {
 		return err
@@ -154,7 +162,7 @@ func (inst *Instance) Connect() error {
 	}
 
 	err = inst.WAClient.Connect()
-	
+
 	// Verificar e atualizar status após Connect
 	go func() {
 		time.Sleep(3 * time.Second)
@@ -164,12 +172,15 @@ func (inst *Instance) Connect() error {
 				inst.Phone = inst.WAClient.Store.ID.User
 			}
 			log.Printf("[CONNECT] Instance %s connected - Phone: %s", inst.Name, inst.Phone)
+			inst.BroadcastSSE(fmt.Sprintf(`{"event":"connected","data":{"phone":"%s"}}`, inst.Phone))
+			inst.saveStatusToDB()
 		} else {
 			inst.Status = "disconnected"
 			log.Printf("[CONNECT] Instance %s failed to connect", inst.Name)
+			inst.saveStatusToDB()
 		}
 	}()
-	
+
 	go inst.keepAlive()
 	return err
 }
@@ -182,6 +193,7 @@ func (inst *Instance) Disconnect() {
 	inst.Status = "disconnected"
 	inst.Phone = ""
 	inst.LastQR = ""
+	inst.saveStatusToDB()
 }
 
 func (inst *Instance) keepAlive() {
@@ -200,12 +212,16 @@ func (inst *Instance) keepAlive() {
 						inst.Phone = inst.WAClient.Store.ID.User
 					}
 					log.Printf("[KEEPALIVE] Instance %s reconnected - Phone: %s", inst.Name, inst.Phone)
+					inst.BroadcastSSE(fmt.Sprintf(`{"event":"connected","data":{"phone":"%s"}}`, inst.Phone))
+					inst.saveStatusToDB()
 				}
 			} else {
 				if inst.Status == "connected" {
 					inst.Status = "disconnected"
 					inst.Phone = ""
 					log.Printf("[KEEPALIVE] Instance %s disconnected", inst.Name)
+					inst.BroadcastSSE(`{"event":"disconnected","data":{}}`)
+					inst.saveStatusToDB()
 				}
 			}
 		}
@@ -220,10 +236,14 @@ func (inst *Instance) handleEvent(evt interface{}) {
 			inst.Phone = inst.WAClient.Store.ID.User
 		}
 		log.Printf("[EVENT] Instance %s Connected - Phone: %s", inst.Name, inst.Phone)
+		inst.BroadcastSSE(fmt.Sprintf(`{"event":"connected","data":{"phone":"%s","qrcode":""}}`, inst.Phone))
+		inst.saveStatusToDB()
 	case *events.Disconnected:
 		inst.Status = "disconnected"
 		inst.Phone = ""
 		log.Printf("[EVENT] Instance %s Disconnected", inst.Name)
+		inst.BroadcastSSE(`{"event":"disconnected","data":{}}`)
+		inst.saveStatusToDB()
 	case *events.Message:
 		if v.Info.IsFromMe {
 			return

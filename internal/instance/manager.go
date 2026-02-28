@@ -100,18 +100,18 @@ func NewInstance(id, name, apiKey string) (*Instance, error) {
 		return nil, fmt.Errorf("erro ao criar cliente whatsapp: %w", err)
 	}
 	inst := &Instance{
-		ID:             id,
-		Name:           name,
-		APIKey:         apiKey,
-		Status:         "disconnected",
-		TypingDelayMin: 1000,
-		TypingDelayMax: 3000,
-		WAClient:       client,
-		Container:      container,
-                TranscriptionEnabled: true,
-		ctx:            ctx,
-		cancel:         cancel,
-		SSEClients:     make(map[chan string]struct{}),
+		ID:                   id,
+		Name:                 name,
+		APIKey:               apiKey,
+		Status:               "disconnected",
+		TranscriptionEnabled: true,
+		TypingDelayMin:       1000,
+		TypingDelayMax:       3000,
+		WAClient:             client,
+		Container:            container,
+		ctx:                  ctx,
+		cancel:               cancel,
+		SSEClients:           make(map[chan string]struct{}),
 	}
 	return inst, nil
 }
@@ -150,21 +150,26 @@ func (inst *Instance) Connect() error {
 					}
 				}
 			}
-        // Verificar status após Connect
-        go func() {
-                time.Sleep(3 * time.Second)
-                if inst.WAClient.IsConnected() {
-                        inst.Status = "connected"
-                        if inst.WAClient.Store.ID != nil {
-                                inst.Phone = inst.WAClient.Store.ID.User
-                        }
-                        log.Printf("[CONNECT] Instance %s connected - Phone: %s", inst.Name, inst.Phone)
-                }
-        }()
 		}()
 	}
 
 	err = inst.WAClient.Connect()
+	
+	// Verificar e atualizar status após Connect
+	go func() {
+		time.Sleep(3 * time.Second)
+		if inst.WAClient.IsConnected() {
+			inst.Status = "connected"
+			if inst.WAClient.Store.ID != nil {
+				inst.Phone = inst.WAClient.Store.ID.User
+			}
+			log.Printf("[CONNECT] Instance %s connected - Phone: %s", inst.Name, inst.Phone)
+		} else {
+			inst.Status = "disconnected"
+			log.Printf("[CONNECT] Instance %s failed to connect", inst.Name)
+		}
+	}()
+	
 	go inst.keepAlive()
 	return err
 }
@@ -175,6 +180,8 @@ func (inst *Instance) Disconnect() {
 		inst.WAClient.Disconnect()
 	}
 	inst.Status = "disconnected"
+	inst.Phone = ""
+	inst.LastQR = ""
 }
 
 func (inst *Instance) keepAlive() {
@@ -192,6 +199,13 @@ func (inst *Instance) keepAlive() {
 					if inst.WAClient.Store.ID != nil {
 						inst.Phone = inst.WAClient.Store.ID.User
 					}
+					log.Printf("[KEEPALIVE] Instance %s reconnected - Phone: %s", inst.Name, inst.Phone)
+				}
+			} else {
+				if inst.Status == "connected" {
+					inst.Status = "disconnected"
+					inst.Phone = ""
+					log.Printf("[KEEPALIVE] Instance %s disconnected", inst.Name)
 				}
 			}
 		}
@@ -205,6 +219,11 @@ func (inst *Instance) handleEvent(evt interface{}) {
 		if inst.WAClient.Store.ID != nil {
 			inst.Phone = inst.WAClient.Store.ID.User
 		}
+		log.Printf("[EVENT] Instance %s Connected - Phone: %s", inst.Name, inst.Phone)
+	case *events.Disconnected:
+		inst.Status = "disconnected"
+		inst.Phone = ""
+		log.Printf("[EVENT] Instance %s Disconnected", inst.Name)
 	case *events.Message:
 		if v.Info.IsFromMe {
 			return
@@ -217,7 +236,6 @@ func (inst *Instance) processMessage(v *events.Message) {
 	isGroup := v.Info.Chat.Server == "g.us"
 	remoteJID := v.Info.Chat.User
 
-	// Extrair sender_number com resolução de LID
 	var senderNumber string
 	if v.Info.Sender.Server == "lid" {
 		phoneJID, err := inst.Container.LIDMap.GetPNForLID(context.Background(), v.Info.Sender)

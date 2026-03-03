@@ -14,12 +14,22 @@ func ListInstances(c *gin.Context) {
 	instances := instance.Global.GetAll()
 	result := make([]gin.H, 0, len(instances))
 	for _, inst := range instances {
-		log.Printf("[LIST] Instance %s - Status: %s, Phone: %s", inst.Name, inst.Status, inst.Phone)
+		// Validar status em tempo real
+		actualStatus := "disconnected"
+		actualPhone := ""
+		if inst.WAClient != nil && inst.WAClient.IsConnected() {
+			actualStatus = "connected"
+			if inst.WAClient.Store.ID != nil {
+				actualPhone = inst.WAClient.Store.ID.User
+			}
+		}
+		
+		log.Printf("[LIST] Instance %s - Status: %s, Phone: %s", inst.Name, actualStatus, actualPhone)
 		result = append(result, gin.H{
 			"id":     inst.ID,
 			"name":   inst.Name,
-			"status": inst.Status,
-			"phone":  inst.Phone,
+			"status": actualStatus,
+			"phone":  actualPhone,
 		})
 	}
 	c.JSON(http.StatusOK, result)

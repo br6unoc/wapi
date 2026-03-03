@@ -51,36 +51,87 @@ func SendMedia(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
 		return
 	}
+	
 	var req struct {
 		Number   string `json:"number" binding:"required"`
-		Media    string `json:"media" binding:"required"`
-		Mimetype string `json:"mimetype" binding:"required"`
-		Filename string `json:"filename"`
-		Caption  string `json:"caption"`
-		Type     string `json:"type"`
+		Media    string `json:"media"`    // Base64 OU URL
+		URL      string `json:"url"`      // Alias para Media
+		Mimetype string `json:"mimetype"` // Opcional agora
+		Filename string `json:"filename"` // Opcional
+		Caption  string `json:"caption"`  // Opcional
+		Type     string `json:"type"`     // Opcional
 	}
+	
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "dados inválidos"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "number e (media ou url) são obrigatórios"})
 		return
 	}
-	data, err := base64.StdEncoding.DecodeString(req.Media)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "media base64 inválido"})
+	
+	// Suportar tanto "media" quanto "url"
+	mediaInput := req.Media
+	if mediaInput == "" {
+		mediaInput = req.URL
+	}
+	
+	if mediaInput == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "media ou url é obrigatório"})
 		return
 	}
+	
+	var data []byte
+	var mimetype string
+	var filename string
+	var err error
+	
+	// Detectar se é URL ou Base64
+	if strings.HasPrefix(mediaInput, "http://") || strings.HasPrefix(mediaInput, "https://") {
+		// É URL - fazer download
+		data, mimetype, filename, err = downloadFromURL(mediaInput)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+			return
+		}
+	} else {
+		// É Base64 - decodificar
+		data, err = base64.StdEncoding.DecodeString(mediaInput)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "media base64 inválido"})
+			return
+		}
+		
+		// Para Base64, mimetype é obrigatório
+		if req.Mimetype == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "mimetype é obrigatório para Base64"})
+			return
+		}
+		mimetype = req.Mimetype
+		filename = req.Filename
+	}
+	
+	// Limpar número
 	number := strings.TrimPrefix(req.Number, "+")
 	number = strings.ReplaceAll(number, " ", "")
+	
+	// Detectar se é áudio
 	isAudio := req.Type == "audio" ||
-		strings.Contains(req.Mimetype, "audio") ||
-		strings.HasSuffix(req.Filename, ".ogg") ||
-		strings.HasSuffix(req.Filename, ".mp3") ||
-		strings.HasSuffix(req.Filename, ".m4a") ||
-		strings.HasSuffix(req.Filename, ".opus")
-	if err := service.SendMedia(inst, number, data, req.Mimetype, req.Filename, req.Caption, isAudio); err != nil {
+		strings.Contains(mimetype, "audio") ||
+		strings.HasSuffix(filename, ".ogg") ||
+		strings.HasSuffix(filename, ".mp3") ||
+		strings.HasSuffix(filename, ".m4a") ||
+		strings.HasSuffix(filename, ".opus")
+	
+	// Enviar mídia
+	if err := service.SendMedia(inst, number, data, mimetype, filename, req.Caption, isAudio); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "mídia enviada com sucesso"})
+	
+	mediaType := classifyMediaType(mimetype, filename)
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "mídia enviada com sucesso",
+		"media_type": mediaType,
+	})
 }
 
 // Helper: Download de mídia da URL

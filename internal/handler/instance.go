@@ -249,6 +249,12 @@ func SSEHandler(c *gin.Context) {
 		c.SSEvent("message", `{"event":"qr","data":{"qrcode":"`+inst.LastQR+`"}}`)
 		c.Writer.Flush()
 	}
+	
+	// Enviar status atual imediatamente ao conectar
+	if inst.Status == "connected" && inst.Phone != "" {
+		c.SSEvent("message", `{"event":"connected","data":{"phone":"`+inst.Phone+`","qrcode":""}}`)
+		c.Writer.Flush()
+	}
 
 	ctx := c.Request.Context()
 	for {

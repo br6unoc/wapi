@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+        "log"
 	"wapi/internal/instance"
 	"wapi/store/postgres"
 
@@ -13,6 +14,7 @@ func ListInstances(c *gin.Context) {
 	instances := instance.Global.GetAll()
 	result := make([]gin.H, 0, len(instances))
 	for _, inst := range instances {
+		log.Printf("[LIST] Instance %s - Status: %s, Phone: %s", inst.Name, inst.Status, inst.Phone)
 		result = append(result, gin.H{
 			"id":     inst.ID,
 			"name":   inst.Name,

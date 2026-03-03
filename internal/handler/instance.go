@@ -14,14 +14,12 @@ func ListInstances(c *gin.Context) {
 	instances := instance.Global.GetAll()
 	result := make([]gin.H, 0, len(instances))
 	for _, inst := range instances {
-		// Validar status em tempo real
+		// Validação rigorosa: só considera conectado se tiver Phone E status connected
 		actualStatus := "disconnected"
-		actualPhone := ""
-		if inst.WAClient != nil && inst.WAClient.IsConnected() {
+		actualPhone := inst.Phone
+		
+		if inst.Status == "connected" && inst.Phone != "" {
 			actualStatus = "connected"
-			if inst.WAClient.Store.ID != nil {
-				actualPhone = inst.WAClient.Store.ID.User
-			}
 		}
 		
 		log.Printf("[LIST] Instance %s - Status: %s, Phone: %s", inst.Name, actualStatus, actualPhone)

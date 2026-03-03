@@ -61,6 +61,7 @@ func main() {
 	// Envio — usa API Key
 	r.POST("/instances/:name/send/text", handler.APIKeyMiddleware(), handler.SendText)
 	r.POST("/instances/:name/send/media", handler.APIKeyMiddleware(), handler.SendMedia)
+	r.POST("/instances/:name/send/media-url", handler.APIKeyMiddleware(), handler.SendMediaURL)
 
 	// Instâncias — usa JWT
 	instances := r.Group("/instances", handler.AuthMiddleware())

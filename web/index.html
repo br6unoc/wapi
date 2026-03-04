@@ -675,8 +675,8 @@ function renderDocs() {
         <div class="endpoint-body">
           <div class="badge-auth">🔐 Requer <span>JWT Token</span></div>
           <div class="code-block">
-            <button class="copy-btn" onclick="copyCode(this, 'curl -X DELETE ' + API + '/instances/teste -H \\'Authorization: Bearer TOKEN\\'')">Copiar</button>
-            <pre>curl -X DELETE ${API}/instances/teste \\
+            <button class="copy-btn" onclick="copyCode(this, 'curl -X DELETE ' + API + '/instances/{instance_name} -H \\'Authorization: Bearer TOKEN\\'')">Copiar</button>
+            <pre>curl -X DELETE ${API}/instances/{instance_name} \\
   -H "Authorization: Bearer TOKEN"</pre>
           </div>
         </div>
@@ -693,8 +693,8 @@ function renderDocs() {
           <div class="badge-auth">🔐 Requer <span>JWT Token</span></div>
           <p class="text-slate-400 text-sm mb-2">Inicia o processo de conexão e gera um QR Code para escanear no WhatsApp.</p>
           <div class="code-block">
-            <button class="copy-btn" onclick="copyCode(this, 'curl -X POST ' + API + '/instances/teste/connect -H \\'Authorization: Bearer TOKEN\\'')">Copiar</button>
-            <pre>curl -X POST ${API}/instances/teste/connect \\
+            <button class="copy-btn" onclick="copyCode(this, 'curl -X POST ' + API + '/instances/{instance_name}/connect -H \\'Authorization: Bearer TOKEN\\'')">Copiar</button>
+            <pre>curl -X POST ${API}/instances/{instance_name}/connect \\
   -H "Authorization: Bearer TOKEN"</pre>
           </div>
         </div>
@@ -710,8 +710,8 @@ function renderDocs() {
         <div class="endpoint-body">
           <div class="badge-auth">🔐 Requer <span>JWT Token</span></div>
           <div class="code-block">
-            <button class="copy-btn" onclick="copyCode(this, 'curl -X POST ' + API + '/instances/teste/disconnect -H \\'Authorization: Bearer TOKEN\\'')">Copiar</button>
-            <pre>curl -X POST ${API}/instances/teste/disconnect \\
+            <button class="copy-btn" onclick="copyCode(this, 'curl -X POST ' + API + '/instances/{instance_name}/disconnect -H \\'Authorization: Bearer TOKEN\\'')">Copiar</button>
+            <pre>curl -X POST ${API}/instances/{instance_name}/disconnect \\
   -H "Authorization: Bearer TOKEN"</pre>
           </div>
         </div>
@@ -728,8 +728,8 @@ function renderDocs() {
           <div class="badge-auth">🔐 Requer <span>JWT Token</span></div>
           <p class="text-slate-400 text-sm mb-2">Retorna o QR Code atual se a instância estiver desconectada.</p>
           <div class="code-block">
-            <button class="copy-btn" onclick="copyCode(this, 'curl -X GET ' + API + '/instances/teste/qrcode -H \\'Authorization: Bearer TOKEN\\'')">Copiar</button>
-            <pre>curl -X GET ${API}/instances/teste/qrcode \\
+            <button class="copy-btn" onclick="copyCode(this, 'curl -X GET ' + API + '/instances/{instance_name}/qrcode -H \\'Authorization: Bearer TOKEN\\'')">Copiar</button>
+            <pre>curl -X GET ${API}/instances/{instance_name}/qrcode \\
   -H "Authorization: Bearer TOKEN"</pre>
           </div>
         </div>
@@ -745,8 +745,8 @@ function renderDocs() {
         <div class="endpoint-body">
           <div class="badge-auth">🔐 Requer <span>JWT Token</span></div>
           <div class="code-block">
-            <button class="copy-btn" onclick="copyCode(this, 'curl -X GET ' + API + '/instances/teste/status -H \\'Authorization: Bearer TOKEN\\'')">Copiar</button>
-            <pre>curl -X GET ${API}/instances/teste/status \\
+            <button class="copy-btn" onclick="copyCode(this, 'curl -X GET ' + API + '/instances/{instance_name}/status -H \\'Authorization: Bearer TOKEN\\'')">Copiar</button>
+            <pre>curl -X GET ${API}/instances/{instance_name}/status \\
   -H "Authorization: Bearer TOKEN"</pre>
           </div>
         </div>
@@ -767,8 +767,8 @@ function renderDocs() {
             <tr><td class="param-name">message</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Texto da mensagem</td></tr>
           </table>
           <div class="code-block">
-            <button class="copy-btn" onclick="copyCode(this, 'curl -X POST ' + API + '/instances/teste/send/text -H \\'apikey: SUA_CHAVE\\' -H \\'Content-Type: application/json\\' -d \\'{&quot;number&quot;:&quot;5511999999999&quot;,&quot;message&quot;:&quot;Olá!&quot;}\\')">Copiar</button>
-            <pre>curl -X POST ${API}/instances/teste/send/text \\
+            <button class="copy-btn" onclick="copyCode(this, 'curl -X POST ' + API + '/instances/{instance_name}/send/text -H \\'apikey: SUA_CHAVE\\' -H \\'Content-Type: application/json\\' -d \\'{&quot;number&quot;:&quot;5511999999999&quot;,&quot;message&quot;:&quot;Olá!&quot;}\\')">Copiar</button>
+            <pre>curl -X POST ${API}/instances/{instance_name}/send/text \\
   -H "apikey: SUA_CHAVE" \\
   -H "Content-Type: application/json" \\
   -d '{"number":"5511999999999","message":"Olá!"}'</pre>
@@ -780,29 +780,43 @@ function renderDocs() {
         <div class="endpoint-header" onclick="toggleEndpoint(this)">
           <span class="method post">POST</span>
           <span class="font-semibold">/instances/:name/send/media</span>
-          <span class="text-slate-400 text-sm ml-2">Enviar mídia (imagem/áudio/vídeo)</span>
+          <span class="text-slate-400 text-sm ml-2">Enviar mídia (URL ou Base64)</span>
           <span class="chevron">▼</span>
         </div>
         <div class="endpoint-body">
           <div class="badge-auth">🔑 Requer <span>API Key</span></div>
+          <p class="text-slate-400 text-sm mb-3">📌 Aceita URL pública OU Base64. MimeType detectado automaticamente para URLs.</p>
           <table class="param-table">
             <tr><th>Parâmetro</th><th>Tipo</th><th>Obrigatório</th><th>Descrição</th></tr>
-            <tr><td class="param-name">number</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Número com DDI</td></tr>
-            <tr><td class="param-name">media</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Base64 do arquivo</td></tr>
-            <tr><td class="param-name">mimetype</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Tipo MIME (ex: image/jpeg)</td></tr>
-            <tr><td class="param-name">filename</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Nome do arquivo</td></tr>
-            <tr><td class="param-name">caption</td><td class="param-type">string</td><td><span class="optional">NÃO</span></td><td>Legenda da mídia</td></tr>
+            <tr><td class="param-name">number</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Número com DDI (ex: 5511999999999)</td></tr>
+            <tr><td class="param-name">url</td><td class="param-type">string</td><td><span class="required">SIM*</span></td><td>URL pública da mídia (limite 25MB)</td></tr>
+            <tr><td class="param-name">media</td><td class="param-type">string</td><td><span class="required">SIM*</span></td><td>Base64 do arquivo (alternativa à URL)</td></tr>
+            <tr><td class="param-name">mimetype</td><td class="param-type">string</td><td><span class="optional">NÃO**</span></td><td>Tipo MIME - obrigatório apenas para Base64</td></tr>
+            <tr><td class="param-name">filename</td><td class="param-type">string</td><td><span class="optional">NÃO</span></td><td>Nome do arquivo (opcional)</td></tr>
+            <tr><td class="param-name">caption</td><td class="param-type">string</td><td><span class="optional">NÃO</span></td><td>Legenda da mídia (opcional)</td></tr>
           </table>
+          <p class="text-xs text-slate-500 mt-2">* Use <strong>url</strong> OU <strong>media</strong>, não ambos</p>
+          <p class="text-xs text-slate-500">** <strong>mimetype</strong> é obrigatório apenas ao usar Base64</p>
+          
+          <div class="text-slate-300 font-semibold mt-4 mb-2">📝 Exemplo 1: Enviar via URL (recomendado)</div>
           <div class="code-block">
-            <button class="copy-btn" onclick="copyCode(this, 'curl -X POST ' + API + '/instances/teste/send/media -H \\'apikey: SUA_CHAVE\\' -H \\'Content-Type: application/json\\' -d \\'{&quot;number&quot;:&quot;5511999999999&quot;,&quot;media&quot;:&quot;BASE64...&quot;,&quot;mimetype&quot;:&quot;image/jpeg&quot;,&quot;filename&quot;:&quot;foto.jpg&quot;}\\')">Copiar</button>
-            <pre>curl -X POST ${API}/instances/teste/send/media \\
+            <button class="copy-btn" onclick="copyCode(this, 'curl -X POST ' + API + '/instances/{instance_name}/send/media -H \\'apikey: SUA_CHAVE\\' -H \\'Content-Type: application/json\\' -d \\'{&quot;number&quot;:&quot;5511999999999&quot;,&quot;url&quot;:&quot;https://exemplo.com/imagem.jpg&quot;,&quot;caption&quot;:&quot;Minha foto&quot;}\\')">Copiar</button>
+            <pre>curl -X POST ${API}/instances/{instance_name}/send/media \\
   -H "apikey: SUA_CHAVE" \\
   -H "Content-Type: application/json" \\
-  -d '{"number":"5511999999999","media":"BASE64...","mimetype":"image/jpeg","filename":"foto.jpg"}'</pre>
+  -d '{"number":"5511999999999","url":"https://exemplo.com/imagem.jpg","caption":"Minha foto"}'</pre>
+          </div>
+          
+          <div class="text-slate-300 font-semibold mt-4 mb-2">📝 Exemplo 2: Enviar via Base64</div>
+          <div class="code-block">
+            <button class="copy-btn" onclick="copyCode(this, 'curl -X POST ' + API + '/instances/{instance_name}/send/media -H \\'apikey: SUA_CHAVE\\' -H \\'Content-Type: application/json\\' -d \\'{&quot;number&quot;:&quot;5511999999999&quot;,&quot;media&quot;:&quot;iVBORw0KGgo...&quot;,&quot;mimetype&quot;:&quot;image/png&quot;,&quot;caption&quot;:&quot;Teste&quot;}\\')">Copiar</button>
+            <pre>curl -X POST ${API}/instances/{instance_name}/send/media \\
+  -H "apikey: SUA_CHAVE" \\
+  -H "Content-Type: application/json" \\
+  -d '{"number":"5511999999999","media":"iVBORw0KGgo...","mimetype":"image/png","caption":"Teste"}'</pre>
           </div>
         </div>
       </div>
-
       <div class="endpoint-card">
         <div class="endpoint-header" onclick="toggleEndpoint(this)">
           <span class="method sse">SSE</span>
@@ -821,8 +835,8 @@ function renderDocs() {
             <tr><td class="param-name">message</td><td>Nova mensagem recebida</td></tr>
           </table>
           <div class="code-block">
-            <button class="copy-btn" onclick="copyCode(this, 'const eventSource = new EventSource(\\'' + API + '/instances/teste/sse\\');\\neventSource.onmessage = (e) => console.log(JSON.parse(e.data));')">Copiar</button>
-            <pre>const eventSource = new EventSource('${API}/instances/teste/sse');
+            <button class="copy-btn" onclick="copyCode(this, 'const eventSource = new EventSource(\\'' + API + '/instances/{instance_name}/sse\\');\\neventSource.onmessage = (e) => console.log(JSON.parse(e.data));')">Copiar</button>
+            <pre>const eventSource = new EventSource('${API}/instances/{instance_name}/sse');
 eventSource.onmessage = (e) => console.log(JSON.parse(e.data));</pre>
           </div>
         </div>
@@ -842,8 +856,8 @@ eventSource.onmessage = (e) => console.log(JSON.parse(e.data));</pre>
             <tr><td class="param-name">webhook_url</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>URL que receberá os eventos</td></tr>
           </table>
           <div class="code-block">
-            <button class="copy-btn" onclick="copyCode(this, 'curl -X PATCH ' + API + '/instances/teste/webhook -H \\'Authorization: Bearer TOKEN\\' -H \\'Content-Type: application/json\\' -d \\'{&quot;webhook_url&quot;:&quot;https://meusite.com/webhook&quot;}\\')">Copiar</button>
-            <pre>curl -X PATCH ${API}/instances/teste/webhook \\
+            <button class="copy-btn" onclick="copyCode(this, 'curl -X PATCH ' + API + '/instances/{instance_name}/webhook -H \\'Authorization: Bearer TOKEN\\' -H \\'Content-Type: application/json\\' -d \\'{&quot;webhook_url&quot;:&quot;https://meusite.com/webhook&quot;}\\')">Copiar</button>
+            <pre>curl -X PATCH ${API}/instances/{instance_name}/webhook \\
   -H "Authorization: Bearer TOKEN" \\
   -H "Content-Type: application/json" \\
   -d '{"webhook_url":"https://meusite.com/webhook"}'</pre>
@@ -862,8 +876,8 @@ eventSource.onmessage = (e) => console.log(JSON.parse(e.data));</pre>
           <div class="badge-auth">🔐 Requer <span>JWT Token</span></div>
           <p class="text-slate-400 text-sm mb-2">Gera uma nova API Key para a instância. A antiga será invalidada.</p>
           <div class="code-block">
-            <button class="copy-btn" onclick="copyCode(this, 'curl -X POST ' + API + '/instances/teste/apikey -H \\'Authorization: Bearer TOKEN\\'')">Copiar</button>
-            <pre>curl -X POST ${API}/instances/teste/apikey \\
+            <button class="copy-btn" onclick="copyCode(this, 'curl -X POST ' + API + '/instances/{instance_name}/apikey -H \\'Authorization: Bearer TOKEN\\'')">Copiar</button>
+            <pre>curl -X POST ${API}/instances/{instance_name}/apikey \\
   -H "Authorization: Bearer TOKEN"</pre>
           </div>
         </div>
@@ -883,8 +897,8 @@ eventSource.onmessage = (e) => console.log(JSON.parse(e.data));</pre>
             <tr><td class="param-name">transcription_enabled</td><td class="param-type">boolean</td><td>Ativar/desativar transcrição de áudio</td></tr>
           </table>
           <div class="code-block">
-            <button class="copy-btn" onclick="copyCode(this, 'curl -X PATCH ' + API + '/instances/teste/config -H \\'Authorization: Bearer TOKEN\\' -H \\'Content-Type: application/json\\' -d \\'{&quot;transcription_enabled&quot;:true}\\')">Copiar</button>
-            <pre>curl -X PATCH ${API}/instances/teste/config \\
+            <button class="copy-btn" onclick="copyCode(this, 'curl -X PATCH ' + API + '/instances/{instance_name}/config -H \\'Authorization: Bearer TOKEN\\' -H \\'Content-Type: application/json\\' -d \\'{&quot;transcription_enabled&quot;:true}\\')">Copiar</button>
+            <pre>curl -X PATCH ${API}/instances/{instance_name}/config \\
   -H "Authorization: Bearer TOKEN" \\
   -H "Content-Type: application/json" \\
   -d '{"transcription_enabled":true}'</pre>

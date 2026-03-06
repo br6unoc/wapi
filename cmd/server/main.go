@@ -57,6 +57,7 @@ func main() {
 	// SSE e QR Code — sem autenticação
 	r.GET("/instances/:name/sse", handler.SSEHandler)
 	r.GET("/instances/:name/qrcode", handler.GetQRCode)
+        r.GET("/instances/:name/groups", handler.GetGroups)
 
 	// Envio — usa API Key
 	r.POST("/instances/:name/send/text", handler.APIKeyMiddleware(), handler.SendText)

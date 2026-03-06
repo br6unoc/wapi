@@ -143,3 +143,25 @@ func SendMedia(inst *instance.Instance, to string, data []byte, mimetype, filena
 
 	return nil
 }
+
+func GetGroups(inst *instance.Instance) ([]map[string]interface{}, error) {
+	if !inst.WAClient.IsConnected() {
+		return nil, fmt.Errorf("instância não conectada")
+	}
+
+	groups, err := inst.WAClient.GetJoinedGroups(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("erro ao buscar grupos: %w", err)
+	}
+
+	result := make([]map[string]interface{}, 0, len(groups))
+	for _, group := range groups {
+		result = append(result, map[string]interface{}{
+			"id":           group.JID.User, // ID do grupo (sem @g.us)
+			"name":         group.Name,
+			"participants": len(group.Participants),
+		})
+	}
+
+	return result, nil
+}

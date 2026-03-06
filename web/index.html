@@ -143,6 +143,7 @@
     <div class="flex gap-3 mb-6">
       <button class="tab active" id="tab-btn-dashboard" onclick="switchTab('dashboard',this)">Dashboard</button>
       <button class="tab" id="tab-btn-send" onclick="switchTab('send',this)">Enviar</button>
+      <button class="tab" id="tab-btn-groups" onclick="switchTab('groups',this)">Grupos</button>
     </div>
 
     <!-- DASHBOARD -->
@@ -251,6 +252,13 @@
         </div>
       </div>
     </div>
+
+    <div id="tab-groups" class="tab-content">
+      <h2 class="text-2xl font-bold mb-6">📱 Grupos do WhatsApp</h2>
+      <div id="groups-list" class="space-y-3">
+        <p class="text-slate-400">Carregando grupos...</p>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -354,6 +362,48 @@ async function loadInstances() {
 }
 
 function showCreateModal() {
+async function loadGroups() {
+  if (!currentInstance) return;
+  const el = document.getElementById('groups-list');
+  el.innerHTML = '<p class="text-slate-400">Carregando grupos...</p>';
+  
+  try {
+    const groups = await api('GET', '/instances/' + currentInstance.name + '/groups');
+    if (!groups || groups.error) {
+      el.innerHTML = '<p class="text-slate-400">Erro ao carregar grupos: ' + (groups.error || 'Desconhecido') + '</p>';
+      return;
+    }
+    if (groups.length === 0) {
+      el.innerHTML = '<p class="text-slate-400">Nenhum grupo encontrado nesta instância.</p>';
+      return;
+    }
+    
+    el.innerHTML = groups.map(group => `
+      <div class="card-instance">
+        <div class="flex items-start gap-3 mb-3">
+          <div class="avatar">👥</div>
+          <div class="flex-1 min-w-0">
+            <div class="font-bold text-lg mb-1">${group.name}</div>
+            <div class="text-slate-400 text-sm">👤 ${group.participants} participantes</div>
+            <div class="text-slate-500 text-xs mt-2 font-mono bg-slate-800 p-2 rounded">${group.id}</div>
+          </div>
+        </div>
+        <button onclick="copyToClipboard('${group.id}')" class="btn-green w-full">📋 Copiar ID</button>
+      </div>
+    `).join('');
+  } catch (err) {
+    el.innerHTML = '<p class="text-red-400">Erro: ' + err.message + '</p>';
+  }
+}
+
+function copyToClipboard(text) {
+  navigator.clipboard.writeText(text).then(() => {
+    toast('ID copiado: ' + text, 'success');
+  }).catch(() => {
+    toast('Erro ao copiar ID', 'error');
+  });
+}
+
   document.getElementById('modal-create').style.display = 'flex';
   setTimeout(() => document.getElementById('new-inst-name').focus(), 100);
 }
@@ -586,9 +636,14 @@ async function sendAudio() {
 
 function switchTab(name, btn) {
   document.querySelectorAll('#screen-instance > div.p-8 > div.flex > .tab').forEach(function(t) { t.classList.remove('active'); });
-  document.querySelectorAll('#tab-dashboard, #tab-send').forEach(function(t) { t.classList.remove('active'); });
+  document.querySelectorAll('#tab-dashboard, #tab-send, #tab-groups').forEach(function(t) { t.classList.remove('active'); });
   document.getElementById('tab-' + name).classList.add('active');
   if (btn) btn.classList.add('active');
+  
+  // Carregar grupos quando a aba for aberta
+  if (name === 'groups') {
+    loadGroups();
+  }
 }
 
 function switchSendTab(name, btn) {
@@ -763,10 +818,11 @@ function renderDocs() {
           <div class="badge-auth">🔑 Requer <span>API Key</span></div>
           <table class="param-table">
             <tr><th>Parâmetro</th><th>Tipo</th><th>Obrigatório</th><th>Descrição</th></tr>
-            <tr><td class="param-name">number</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Número com DDI (ex: 5511999999999)</td></tr>
+            <tr><td class="param-name">number</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Número com DDI ou ID do grupo (ex: 5511999999999 ou 120363044982482340)</td></tr>
             <tr><td class="param-name">message</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Texto da mensagem</td></tr>
           </table>
           <div class="code-block">
+          <p class="text-xs text-slate-500 mt-2">💡 <strong>Grupos:</strong> Use o ID numérico do grupo (15+ dígitos). A API detecta automaticamente e adiciona @g.us</p>
             <button class="copy-btn" onclick="copyCode(this, 'curl -X POST ' + API + '/instances/{instance_name}/send/text -H \\'apikey: SUA_CHAVE\\' -H \\'Content-Type: application/json\\' -d \\'{&quot;number&quot;:&quot;5511999999999&quot;,&quot;message&quot;:&quot;Olá!&quot;}\\')">Copiar</button>
             <pre>curl -X POST ${API}/instances/{instance_name}/send/text \\
   -H "apikey: SUA_CHAVE" \\
@@ -788,7 +844,7 @@ function renderDocs() {
           <p class="text-slate-400 text-sm mb-3">📌 Aceita URL pública OU Base64. MimeType detectado automaticamente para URLs.</p>
           <table class="param-table">
             <tr><th>Parâmetro</th><th>Tipo</th><th>Obrigatório</th><th>Descrição</th></tr>
-            <tr><td class="param-name">number</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Número com DDI (ex: 5511999999999)</td></tr>
+            <tr><td class="param-name">number</td><td class="param-type">string</td><td><span class="required">SIM</span></td><td>Número com DDI ou ID do grupo (ex: 5511999999999 ou 120363044982482340)</td></tr>
             <tr><td class="param-name">url</td><td class="param-type">string</td><td><span class="required">SIM*</span></td><td>URL pública da mídia (limite 25MB)</td></tr>
             <tr><td class="param-name">media</td><td class="param-type">string</td><td><span class="required">SIM*</span></td><td>Base64 do arquivo (alternativa à URL)</td></tr>
             <tr><td class="param-name">mimetype</td><td class="param-type">string</td><td><span class="optional">NÃO**</span></td><td>Tipo MIME - obrigatório apenas para Base64</td></tr>
@@ -798,6 +854,7 @@ function renderDocs() {
           <p class="text-xs text-slate-500 mt-2">* Use <strong>url</strong> OU <strong>media</strong>, não ambos</p>
           <p class="text-xs text-slate-500">** <strong>mimetype</strong> é obrigatório apenas ao usar Base64</p>
           
+          <p class="text-xs text-slate-500">💡 <strong>Grupos:</strong> Use o ID numérico do grupo (15+ dígitos). A API detecta automaticamente e adiciona @g.us</p>
           <div class="text-slate-300 font-semibold mt-4 mb-2">📝 Exemplo 1: Enviar via URL (recomendado)</div>
           <div class="code-block">
             <button class="copy-btn" onclick="copyCode(this, 'curl -X POST ' + API + '/instances/{instance_name}/send/media -H \\'apikey: SUA_CHAVE\\' -H \\'Content-Type: application/json\\' -d \\'{&quot;number&quot;:&quot;5511999999999&quot;,&quot;url&quot;:&quot;https://exemplo.com/imagem.jpg&quot;,&quot;caption&quot;:&quot;Minha foto&quot;}\\')">Copiar</button>

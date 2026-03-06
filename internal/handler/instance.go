@@ -4,6 +4,7 @@ import (
 	"net/http"
         "log"
 	"wapi/internal/instance"
+        "wapi/internal/service"
 	"wapi/store/postgres"
 
 	"github.com/gin-gonic/gin"
@@ -278,4 +279,21 @@ func SSEHandler(c *gin.Context) {
 			c.Writer.Flush()
 		}
 	}
+}
+
+func GetGroups(c *gin.Context) {
+	name := c.Param("name")
+	inst, ok := instance.Global.GetByName(name)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
+		return
+	}
+
+	groups, err := service.GetGroups(inst)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, groups)
 }

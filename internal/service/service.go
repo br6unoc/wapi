@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strings"
 	"time"
 	"wapi/internal/instance"
 
@@ -13,12 +14,29 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// Helper: Criar JID corretamente (grupo ou contato)
+func parseJID(number string) types.JID {
+	// Se já tem @, fazer parse direto
+	if strings.Contains(number, "@") {
+		jid, _ := types.ParseJID(number)
+		return jid
+	}
+	
+	// Se é número de grupo (mais de 15 dígitos), adicionar @g.us
+	if len(number) > 15 {
+		return types.NewJID(number, types.GroupServer)
+	}
+	
+	// Caso contrário, é contato normal
+	return types.NewJID(number, types.DefaultUserServer)
+}
+
 func SendText(inst *instance.Instance, to, message string) error {
 	if !inst.WAClient.IsConnected() {
 		return fmt.Errorf("instância não conectada")
 	}
 
-	jid := types.NewJID(to, types.DefaultUserServer)
+	jid := parseJID(to)
 
 	inst.WAClient.SendPresence(context.Background(), types.PresenceAvailable)
 	time.Sleep(500 * time.Millisecond)
@@ -47,7 +65,7 @@ func SendMedia(inst *instance.Instance, to string, data []byte, mimetype, filena
 		return fmt.Errorf("instância não conectada")
 	}
 
-	jid := types.NewJID(to, types.DefaultUserServer)
+	jid := parseJID(to)
 
 	inst.WAClient.SendPresence(context.Background(), types.PresenceAvailable)
 	time.Sleep(500 * time.Millisecond)

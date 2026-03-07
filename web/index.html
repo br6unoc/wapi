@@ -369,7 +369,15 @@ async function loadGroups() {
   el.innerHTML = '<p class="text-slate-400">Carregando grupos...</p>';
   
   try {
-    const groups = await api('GET', '/instances/' + currentInstance.name + '/groups');
+    const res = await fetch(API + '/instances/' + currentInstance.name + '/groups', {
+      method: 'GET',
+      headers: { 
+        'Content-Type': 'application/json', 
+        'Authorization': 'Bearer ' + token 
+      }
+    });
+    const groups = await res.json();
+    
     if (!groups || groups.error) {
       el.innerHTML = '<p class="text-slate-400">Erro ao carregar grupos: ' + (groups.error || 'Desconhecido') + '</p>';
       return;

@@ -120,6 +120,19 @@ func SendMedia(inst *instance.Instance, to string, data []byte, mimetype, filena
 				Caption:       proto.String(caption),
 			},
 		}
+	} else if strings.HasPrefix(mimetype, "video/") {
+		msg = &waProto.Message{
+			VideoMessage: &waProto.VideoMessage{
+				URL:           proto.String(uploaded.URL),
+				DirectPath:    proto.String(uploaded.DirectPath),
+				MediaKey:      uploaded.MediaKey,
+				FileEncSHA256: uploaded.FileEncSHA256,
+				FileSHA256:    uploaded.FileSHA256,
+				FileLength:    proto.Uint64(uint64(len(data))),
+				Mimetype:      proto.String(mimetype),
+				Caption:       proto.String(caption),
+			},
+		}
 	} else {
 		msg = &waProto.Message{
 			DocumentMessage: &waProto.DocumentMessage{

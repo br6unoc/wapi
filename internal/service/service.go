@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+        "log"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -91,6 +92,7 @@ func SendMedia(inst *instance.Instance, to string, data []byte, mimetype, filena
 	}
 
 	if err != nil {
+        log.Printf("[ERROR] Upload failed - mimetype: %s, isAudio: %v, error: %v", mimetype, isAudio, err)
 		return fmt.Errorf("erro ao fazer upload: %w", err)
 	}
 

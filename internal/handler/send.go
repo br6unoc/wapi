@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/base64"
+        "log"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -121,6 +122,7 @@ func SendMedia(c *gin.Context) {
 		strings.HasSuffix(filename, ".opus")
 	
 	// Enviar mídia
+                log.Printf("[ERROR] SendMedia failed: %v", err)
 	if err := service.SendMedia(inst, number, data, mimetype, filename, req.Caption, isAudio); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

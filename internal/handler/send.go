@@ -120,13 +120,12 @@ func SendMedia(c *gin.Context) {
 		strings.HasSuffix(filename, ".mp3") ||
 		strings.HasSuffix(filename, ".m4a") ||
 		strings.HasSuffix(filename, ".opus")
-	
-	// Enviar mídia
-                log.Printf("[ERROR] SendMedia failed: %v", err)
 	if err := service.SendMedia(inst, number, data, mimetype, filename, req.Caption, isAudio); err != nil {
+                log.Printf("[ERROR] SendMedia failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+        log.Printf("[SUCCESS] Media sent - type: %s, size: %d bytes", mimetype, len(data))
 	
 	mediaType := classifyMediaType(mimetype, filename)
 	c.JSON(http.StatusOK, gin.H{

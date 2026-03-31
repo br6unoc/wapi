@@ -84,6 +84,8 @@ func SendMedia(inst *instance.Instance, to string, data []byte, mimetype, filena
 		uploaded, err = inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaAudio)
 	} else if mimetype == "image/jpeg" || mimetype == "image/png" || mimetype == "image/webp" {
 		uploaded, err = inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaImage)
+	} else if strings.HasPrefix(mimetype, "video/") {
+		uploaded, err = inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaVideo)
 	} else {
 		uploaded, err = inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaDocument)
 	}

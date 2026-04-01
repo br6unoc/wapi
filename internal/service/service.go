@@ -85,7 +85,8 @@ func SendMedia(inst *instance.Instance, to string, data []byte, mimetype, filena
 		uploaded, err = inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaAudio)
 	} else if mimetype == "image/jpeg" || mimetype == "image/png" || mimetype == "image/webp" {
 		uploaded, err = inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaImage)
-	} else if strings.HasPrefix(mimetype, "video/") {
+        // Vídeos <= 16MB → VideoMessage (com preview), > 16MB → DocumentMessage
+	} else if strings.HasPrefix(mimetype, "video/") && len(data) <= 16*1024*1024 {
 		uploaded, err = inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaVideo)
 	} else {
 		uploaded, err = inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaDocument)
@@ -124,7 +125,8 @@ func SendMedia(inst *instance.Instance, to string, data []byte, mimetype, filena
 				Caption:       proto.String(caption),
 			},
 		}
-	} else if strings.HasPrefix(mimetype, "video/") {
+        // Vídeos <= 16MB → VideoMessage (com preview), > 16MB → DocumentMessage
+	} else if strings.HasPrefix(mimetype, "video/") && len(data) <= 16*1024*1024 {
 		msg = &waProto.Message{
 			VideoMessage: &waProto.VideoMessage{
 				URL:           proto.String(uploaded.URL),

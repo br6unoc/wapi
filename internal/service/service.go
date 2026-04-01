@@ -152,12 +152,14 @@ func SendMedia(inst *instance.Instance, to string, data []byte, mimetype, filena
 			},
 		}
 	}
+        log.Printf("[DEBUG] Sending message - type: %s, size: %d, jid: %s", mimetype, len(data), jid.String())
 
 	_, err = inst.WAClient.SendMessage(context.Background(), jid, msg)
 	if err != nil {
 		return fmt.Errorf("erro ao enviar mídia: %w", err)
 	}
 
+        log.Printf("[DEBUG] Message sent successfully")
 	return nil
 }
 

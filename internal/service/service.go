@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+        "os"
+        "os/exec"
 	"time"
 	"wapi/internal/instance"
 
@@ -78,6 +80,20 @@ func SendMedia(inst *instance.Instance, to string, data []byte, mimetype, filena
 	}
 
 	delay := rand.Intn(inst.TypingDelayMax-inst.TypingDelayMin) + inst.TypingDelayMin
+
+	// Comprimir vídeos > 16MB automaticamente
+	if strings.HasPrefix(mimetype, "video/") && len(data) > 16*1024*1024 {
+		log.Printf("[COMPRESS] Video > 16MB detected (%d bytes), compressing...", len(data))
+		compressed, err := compressVideo(data)
+		if err != nil {
+			log.Printf("[COMPRESS] Failed to compress: %v, sending original", err)
+		} else if len(compressed) < len(data) {
+			data = compressed
+			log.Printf("[COMPRESS] Using compressed video")
+		} else {
+			log.Printf("[COMPRESS] Compressed larger than original, using original")
+		}
+	}
 	time.Sleep(time.Duration(delay) * time.Millisecond)
 
 	uploaded, err := inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaImage)
@@ -183,4 +199,38 @@ func GetGroups(inst *instance.Instance) ([]map[string]interface{}, error) {
 	}
 
 	return result, nil
+}
+
+func compressVideo(data []byte) ([]byte, error) {
+	// Salvar vídeo temporário
+	tmpInput := fmt.Sprintf("/tmp/video_input_%d.mp4", time.Now().UnixNano())
+	tmpOutput := fmt.Sprintf("/tmp/video_output_%d.mp4", time.Now().UnixNano())
+	
+	if err := os.WriteFile(tmpInput, data, 0644); err != nil {
+		return nil, fmt.Errorf("erro ao salvar vídeo temporário: %w", err)
+	}
+	defer os.Remove(tmpInput)
+	defer os.Remove(tmpOutput)
+	
+	// Comprimir com FFmpeg (reduz para ~70% do tamanho original)
+	cmd := exec.Command("ffmpeg", "-i", tmpInput, 
+		"-vcodec", "libx264", 
+		"-crf", "28",
+		"-preset", "fast",
+		"-vf", "scale='min(1280,iw)':'min(720,ih)'",
+		"-y", tmpOutput)
+	
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("erro ao comprimir vídeo: %w", err)
+	}
+	
+	compressed, err := os.ReadFile(tmpOutput)
+	if err != nil {
+		return nil, fmt.Errorf("erro ao ler vídeo comprimido: %w", err)
+	}
+	
+	log.Printf("[COMPRESS] Video compressed: %d bytes → %d bytes (%.1f%%)", 
+		len(data), len(compressed), float64(len(compressed))/float64(len(data))*100)
+	
+	return compressed, nil
 }

@@ -82,13 +82,27 @@ func SendMedia(inst *instance.Instance, to string, data []byte, mimetype, filena
 	delay := rand.Intn(inst.TypingDelayMax-inst.TypingDelayMin) + inst.TypingDelayMin
 
 	// Comprimir vídeos > 16MB automaticamente
+
+	// Comprimir vídeos > 16MB
+	if strings.HasPrefix(mimetype, "video/") && len(data) > 16*1024*1024 {
+		log.Printf("[COMPRESS] Video > 16MB (%d bytes), compressing...", len(data))
+		compressed, newMime, err := compressVideo(data)
+		if err != nil {
+			log.Printf("[COMPRESS] Failed: %v", err)
+		} else if len(compressed) < len(data) {
+			data = compressed
+			mimetype = newMime
+			log.Printf("[COMPRESS] Success")
+		}
+	}
 	if strings.HasPrefix(mimetype, "video/") && len(data) > 16*1024*1024 {
 		log.Printf("[COMPRESS] Video > 16MB detected (%d bytes), compressing...", len(data))
-		compressed, err := compressVideo(data)
+		compressed, newMime, err := compressVideo(data)
 		if err != nil {
 			log.Printf("[COMPRESS] Failed to compress: %v, sending original", err)
 		} else if len(compressed) < len(data) {
 			data = compressed
+                        mimetype = newMime
 			log.Printf("[COMPRESS] Using compressed video")
 		} else {
 			log.Printf("[COMPRESS] Compressed larger than original, using original")
@@ -201,13 +215,13 @@ func GetGroups(inst *instance.Instance) ([]map[string]interface{}, error) {
 	return result, nil
 }
 
-func compressVideo(data []byte) ([]byte, error) {
+func compressVideo(data []byte) ([]byte, string, error) {
 	// Salvar vídeo temporário
 	tmpInput := fmt.Sprintf("/tmp/video_input_%d.mp4", time.Now().UnixNano())
 	tmpOutput := fmt.Sprintf("/tmp/video_output_%d.mp4", time.Now().UnixNano())
 	
 	if err := os.WriteFile(tmpInput, data, 0644); err != nil {
-		return nil, fmt.Errorf("erro ao salvar vídeo temporário: %w", err)
+		return nil, "", fmt.Errorf("erro ao salvar vídeo temporário: %w", err)
 	}
 	defer os.Remove(tmpInput)
 	defer os.Remove(tmpOutput)
@@ -216,21 +230,25 @@ func compressVideo(data []byte) ([]byte, error) {
 	cmd := exec.Command("ffmpeg", "-i", tmpInput, 
 		"-vcodec", "libx264", 
 		"-crf", "28",
+                "-acodec", "aac",
+                "-movflags", "+faststart",
+                "-pix_fmt", "yuv420p",
+                "-f", "mp4",
 		"-preset", "fast",
 		"-vf", "scale='min(1280,iw)':'min(720,ih)'",
 		"-y", tmpOutput)
 	
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("erro ao comprimir vídeo: %w", err)
+		return nil, "", fmt.Errorf("erro ao comprimir vídeo: %w", err)
 	}
 	
 	compressed, err := os.ReadFile(tmpOutput)
 	if err != nil {
-		return nil, fmt.Errorf("erro ao ler vídeo comprimido: %w", err)
+		return nil, "", fmt.Errorf("erro ao ler vídeo comprimido: %w", err)
 	}
 	
 	log.Printf("[COMPRESS] Video compressed: %d bytes → %d bytes (%.1f%%)", 
 		len(data), len(compressed), float64(len(compressed))/float64(len(data))*100)
 	
-	return compressed, nil
+	return compressed, "video/mp4", nil
 }

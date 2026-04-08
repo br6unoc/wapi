@@ -84,14 +84,37 @@ func SendMedia(c *gin.Context) {
 	var filename string
 	var err error
 	
-	// Detectar se é URL ou Base64
+	// Se é URL, verificar se deve processar em background
 	if strings.HasPrefix(mediaInput, "http://") || strings.HasPrefix(mediaInput, "https://") {
-		// É URL - fazer download
-		data, mimetype, filename, err = downloadFromURL(mediaInput)
-		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-			return
-		}
+		// Responde imediatamente e processa em background
+		log.Printf("[ASYNC] URL detected, responding immediately and processing in background")
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "mídia em processamento, será enviada em breve",
+		})
+		number := strings.TrimPrefix(req.Number, "+")
+		number = strings.ReplaceAll(number, " ", "")
+		caption := req.Caption
+		mediaType := req.Type
+		go func() {
+			gData, gMime, gFilename, gErr := downloadFromURL(mediaInput)
+			if gErr != nil {
+				log.Printf("[ASYNC ERROR] Download failed: %v", gErr)
+				return
+			}
+			gIsAudio := mediaType == "audio" ||
+				strings.Contains(gMime, "audio") ||
+				strings.HasSuffix(gFilename, ".ogg") ||
+				strings.HasSuffix(gFilename, ".mp3") ||
+				strings.HasSuffix(gFilename, ".m4a") ||
+				strings.HasSuffix(gFilename, ".opus")
+			if gErr = service.SendMedia(inst, number, gData, gMime, gFilename, caption, gIsAudio); gErr != nil {
+				log.Printf("[ASYNC ERROR] SendMedia failed: %v", gErr)
+			} else {
+				log.Printf("[ASYNC SUCCESS] Media sent - type: %s, size: %d bytes", gMime, len(gData))
+			}
+		}()
+		return
 	} else {
 		// É Base64 - decodificar
 		data, err = base64.StdEncoding.DecodeString(mediaInput)

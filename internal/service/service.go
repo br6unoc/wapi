@@ -235,7 +235,7 @@ func compressVideo(data []byte) ([]byte, string, error) {
                 "-pix_fmt", "yuv420p",
                 "-f", "mp4",
 		"-preset", "fast",
-		"-vf", "scale='min(1280,iw)':'min(720,ih)'",
+		"-vf", "scale='min(1280,iw):-2'",
 		"-y", tmpOutput)
 	
 	if err := cmd.Run(); err != nil {

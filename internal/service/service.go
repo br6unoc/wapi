@@ -80,34 +80,21 @@ func SendMedia(inst *instance.Instance, to string, data []byte, mimetype, filena
 	}
 
 	delay := rand.Intn(inst.TypingDelayMax-inst.TypingDelayMin) + inst.TypingDelayMin
-
 	// Comprimir vídeos > 16MB automaticamente
-
-	// Comprimir vídeos > 16MB
 	if strings.HasPrefix(mimetype, "video/") && len(data) > 16*1024*1024 {
 		log.Printf("[COMPRESS] Video > 16MB (%d bytes), compressing...", len(data))
-		compressed, newMime, err := compressVideo(data)
-		if err != nil {
-			log.Printf("[COMPRESS] Failed: %v", err)
-		} else if len(compressed) < len(data) {
-			data = compressed
-			mimetype = newMime
-			log.Printf("[COMPRESS] Success")
-		}
-	}
-	if strings.HasPrefix(mimetype, "video/") && len(data) > 16*1024*1024 {
-		log.Printf("[COMPRESS] Video > 16MB detected (%d bytes), compressing...", len(data))
 		compressed, newMime, err := compressVideo(data)
 		if err != nil {
 			log.Printf("[COMPRESS] Failed to compress: %v, sending original", err)
 		} else if len(compressed) < len(data) {
 			data = compressed
-                        mimetype = newMime
-			log.Printf("[COMPRESS] Using compressed video")
+			mimetype = newMime
+			log.Printf("[COMPRESS] Success")
 		} else {
 			log.Printf("[COMPRESS] Compressed larger than original, using original")
 		}
 	}
+
 	time.Sleep(time.Duration(delay) * time.Millisecond)
 
 	uploaded, err := inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaImage)

@@ -120,14 +120,33 @@ func SendMedia(c *gin.Context) {
 		strings.HasSuffix(filename, ".mp3") ||
 		strings.HasSuffix(filename, ".m4a") ||
 		strings.HasSuffix(filename, ".opus")
+	mediaType := classifyMediaType(mimetype, filename)
+
+	// Vídeo grande: responde imediatamente e processa em background
+	if strings.HasPrefix(mimetype, "video/") && len(data) > 16*1024*1024 {
+		log.Printf("[ASYNC] Large video (%d bytes), responding immediately", len(data))
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "vídeo em processamento, será enviado em breve",
+			"media_type": mediaType,
+		})
+		go func() {
+			if err := service.SendMedia(inst, number, data, mimetype, filename, req.Caption, isAudio); err != nil {
+				log.Printf("[ASYNC ERROR] SendMedia failed: %v", err)
+			} else {
+				log.Printf("[ASYNC SUCCESS] Large video sent - size: %d bytes", len(data))
+			}
+		}()
+		return
+	}
+
+	// Mídia normal: comportamento síncrono
 	if err := service.SendMedia(inst, number, data, mimetype, filename, req.Caption, isAudio); err != nil {
-                log.Printf("[ERROR] SendMedia failed: %v", err)
+		log.Printf("[ERROR] SendMedia failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-        log.Printf("[SUCCESS] Media sent - type: %s, size: %d bytes", mimetype, len(data))
-	
-	mediaType := classifyMediaType(mimetype, filename)
+	log.Printf("[SUCCESS] Media sent - type: %s, size: %d bytes", mimetype, len(data))
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "mídia enviada com sucesso",

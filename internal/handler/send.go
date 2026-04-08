@@ -180,7 +180,7 @@ func SendMedia(c *gin.Context) {
 // Helper: Download de mídia da URL
 func downloadFromURL(url string) ([]byte, string, string, error) {
 	client := &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: 300 * time.Second,
 	}
 	
 	resp, err := client.Get(url)
@@ -194,8 +194,8 @@ func downloadFromURL(url string) ([]byte, string, string, error) {
 	}
 	
 	// Verificar tamanho (limite 25MB)
-	if resp.ContentLength > 25*1024*1024 {
-		return nil, "", "", fmt.Errorf("arquivo excede o limite de 25MB")
+	if resp.ContentLength > 200*1024*1024 {
+		return nil, "", "", fmt.Errorf("arquivo excede o limite de 200MB")
 	}
 	
 	data, err := io.ReadAll(resp.Body)

@@ -1035,8 +1035,7 @@ function closeTokens() {
   document.getElementById("modal-tokens").style.display = "none";
 }
 async function loadTokens() {
-  const res = await apiFetch("/auth/tokens");
-  const tokens = await res.json();
+  const tokens = await api('GET', '/auth/tokens');
   const el = document.getElementById("tokens-list");
   if (!tokens.length) {
     el.innerHTML = "<p style=\"color:#94a3b8;text-align:center\">Nenhum token criado ainda.</p>";
@@ -1059,19 +1058,15 @@ async function loadTokens() {
 async function createToken() {
   const name = document.getElementById("token-name").value.trim();
   if (!name) { alert("Digite um nome para o token"); return; }
-  const res = await apiFetch("/auth/tokens", { method: "POST", body: JSON.stringify({ name }) });
-  if (res.ok) {
-    document.getElementById("token-name").value = "";
-    loadTokens();
-  } else {
-    const err = await res.json();
-    alert("Erro: " + err.error);
-  }
+  const res = await api('POST', '/auth/tokens', { name });
+  if (res.error) { alert("Erro: " + res.error); return; }
+  document.getElementById("token-name").value = "";
+  loadTokens();
 }
 async function deleteToken(id) {
   if (!confirm("Revogar este token?")) return;
-  const res = await apiFetch("/auth/tokens/" + id, { method: "DELETE" });
-  if (res.ok) loadTokens();
+  await api('DELETE', '/auth/tokens/' + id);
+  loadTokens();
 }
 </script>
 <!-- Modal JWT Tokens -->

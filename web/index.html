@@ -1039,7 +1039,7 @@ async function loadTokens() {
   const tokens = await res.json();
   const el = document.getElementById("tokens-list");
   if (!tokens.length) {
-    el.innerHTML = "<p style="color:#94a3b8;text-align:center">Nenhum token criado ainda.</p>";
+    el.innerHTML = "<p style=\"color:#94a3b8;text-align:center\">Nenhum token criado ainda.</p>";
     return;
   }
   el.innerHTML = tokens.map(t => `
@@ -1073,7 +1073,7 @@ async function deleteToken(id) {
   const res = await apiFetch("/auth/tokens/" + id, { method: "DELETE" });
   if (res.ok) loadTokens();
 }
-
+</script>
 <!-- Modal JWT Tokens -->
 <div id="modal-tokens" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center">
   <div style="background:#1a1d27;border:1px solid #2a2d3a;border-radius:12px;padding:32px;width:100%;max-width:600px;max-height:80vh;overflow-y:auto">
@@ -1088,6 +1088,5 @@ async function deleteToken(id) {
     <div id="tokens-list"></div>
   </div>
 </div>
-</script>
 </body>
 </html>

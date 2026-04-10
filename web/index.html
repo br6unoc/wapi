@@ -106,6 +106,7 @@
     </div>
     <div class="flex items-center gap-4">
       <span id="nav-user" class="text-slate-400 text-sm"></span>
+      <button onclick="showTokens()" class="btn-dark btn-sm">🔑 JWT Token</button>
       <button onclick="showDocs()" class="btn-dark btn-sm">📄 Documentação</button>
       <button onclick="doLogout()" class="btn-dark btn-sm">Sair</button>
     </div>
@@ -1025,6 +1026,68 @@ if (token) {
 } else {
   showScreen('login');
 }
+
+function showTokens() {
+  document.getElementById("modal-tokens").style.display = "flex";
+  loadTokens();
+}
+function closeTokens() {
+  document.getElementById("modal-tokens").style.display = "none";
+}
+async function loadTokens() {
+  const res = await apiFetch("/auth/tokens");
+  const tokens = await res.json();
+  const el = document.getElementById("tokens-list");
+  if (!tokens.length) {
+    el.innerHTML = "<p style="color:#94a3b8;text-align:center">Nenhum token criado ainda.</p>";
+    return;
+  }
+  el.innerHTML = tokens.map(t => `
+    <div style="background:#0f1117;border:1px solid #2a2d3a;border-radius:8px;padding:14px 16px;margin-bottom:10px">
+      <div class="flex items-center justify-between mb-2">
+        <span style="font-weight:600">${t.name}</span>
+        <button onclick="deleteToken('${t.id}')" style="color:#ef4444;background:none;border:none;cursor:pointer;font-size:12px">🗑 Revogar</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <code style="font-size:11px;color:#94a3b8;word-break:break-all;flex:1">${t.token}</code>
+        <button onclick="navigator.clipboard.writeText('${t.token}')" style="background:#2a2d3a;border:none;border-radius:6px;padding:4px 8px;color:#fff;cursor:pointer;font-size:11px;white-space:nowrap">📋 Copiar</button>
+      </div>
+      <div style="font-size:11px;color:#64748b;margin-top:6px">Criado em: ${new Date(t.created_at).toLocaleString("pt-BR")}</div>
+    </div>
+  `).join("");
+}
+async function createToken() {
+  const name = document.getElementById("token-name").value.trim();
+  if (!name) { alert("Digite um nome para o token"); return; }
+  const res = await apiFetch("/auth/tokens", { method: "POST", body: JSON.stringify({ name }) });
+  if (res.ok) {
+    document.getElementById("token-name").value = "";
+    loadTokens();
+  } else {
+    const err = await res.json();
+    alert("Erro: " + err.error);
+  }
+}
+async function deleteToken(id) {
+  if (!confirm("Revogar este token?")) return;
+  const res = await apiFetch("/auth/tokens/" + id, { method: "DELETE" });
+  if (res.ok) loadTokens();
+}
+
+<!-- Modal JWT Tokens -->
+<div id="modal-tokens" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center">
+  <div style="background:#1a1d27;border:1px solid #2a2d3a;border-radius:12px;padding:32px;width:100%;max-width:600px;max-height:80vh;overflow-y:auto">
+    <div class="flex items-center justify-between mb-6">
+      <h2 class="text-xl font-bold">🔑 JWT Tokens Permanentes</h2>
+      <button onclick="closeTokens()" style="color:#94a3b8;font-size:20px;background:none;border:none;cursor:pointer">✕</button>
+    </div>
+    <div class="flex gap-3 mb-6">
+      <input id="token-name" type="text" placeholder="Nome do token (ex: minha-app)" style="flex:1;background:#0f1117;border:1px solid #2a2d3a;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px" />
+      <button onclick="createToken()" class="btn-green">Gerar Token</button>
+    </div>
+    <div id="tokens-list"></div>
+  </div>
+</div>
 </script>
 </body>
 </html>

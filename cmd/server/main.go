@@ -52,6 +52,9 @@ func main() {
 	{
 		authGroup.POST("/login", handler.Login)
 		authGroup.GET("/me", handler.AuthMiddleware(), handler.Me)
+		authGroup.POST("/tokens", handler.AuthMiddleware(), handler.CreateToken)
+		authGroup.GET("/tokens", handler.AuthMiddleware(), handler.ListTokens)
+		authGroup.DELETE("/tokens/:id", handler.AuthMiddleware(), handler.DeleteToken)
 	}
 
 	// SSE e QR Code — sem autenticação

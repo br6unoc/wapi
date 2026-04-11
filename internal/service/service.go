@@ -81,32 +81,26 @@ func SendMedia(inst *instance.Instance, to string, data []byte, mimetype, filena
 
 	delay := rand.Intn(inst.TypingDelayMax-inst.TypingDelayMin) + inst.TypingDelayMin
 	// Comprimir vídeos > 16MB automaticamente
-	if strings.HasPrefix(mimetype, "video/") && len(data) > 16*1024*1024 {
-		log.Printf("[COMPRESS] Video > 16MB (%d bytes), compressing...", len(data))
-		compressed, newMime, err := compressVideo(data)
-		if err != nil {
-			log.Printf("[COMPRESS] Failed to compress: %v, sending original", err)
-		} else if len(compressed) < len(data) {
-			data = compressed
-			mimetype = newMime
-			log.Printf("[COMPRESS] Success")
-		} else {
-			log.Printf("[COMPRESS] Compressed larger than original, using original")
+	if strings.HasPrefix(mimetype, "video/") {
+		log.Printf("[CONVERT] Converting video to mp4...")
+		converted, _, convErr := compressVideo(data)
+		if convErr == nil && len(converted) > 0 {
+			data = converted
+			mimetype = "video/mp4"
+			log.Printf("[CONVERT] Success")
 		}
-	}
-
-	time.Sleep(time.Duration(delay) * time.Millisecond)
-
-	uploaded, err := inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaImage)
-	if isAudio {
-		uploaded, err = inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaAudio)
-	} else if mimetype == "image/jpeg" || mimetype == "image/png" || mimetype == "image/webp" {
-		uploaded, err = inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaImage)
-	} else if strings.HasPrefix(mimetype, "video/") {
-		uploaded, err = inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaVideo)
-	} else {
-		uploaded, err = inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaDocument)
-	}
+        }
+        time.Sleep(time.Duration(delay) * time.Millisecond)
+        uploaded, err := inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaImage)
+        if isAudio {
+                uploaded, err = inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaAudio)
+        } else if mimetype == "image/jpeg" || mimetype == "image/png" || mimetype == "image/webp" {
+                uploaded, err = inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaImage)
+        } else if strings.HasPrefix(mimetype, "video/") {
+                uploaded, err = inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaVideo)
+        } else {
+                uploaded, err = inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaDocument)
+        }
 
 	if err != nil {
         log.Printf("[ERROR] Upload failed - mimetype: %s, isAudio: %v, error: %v", mimetype, isAudio, err)

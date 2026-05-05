@@ -21,6 +21,7 @@ import (
 
 type Instance struct {
 	ID                   string
+	CompanyID            string
 	Name                 string
 	APIKey               string
 	WebhookURL           string
@@ -43,9 +44,10 @@ type Manager struct {
 	mu        sync.RWMutex
 }
 
-var Global = &Manager{
-	instances: make(map[string]*Instance),
-}
+var (
+	Global      = &Manager{instances: make(map[string]*Instance)}
+	MessageHook func(companyID string, senderNumber string, message string, inst *Instance)
+)
 
 func (m *Manager) Add(inst *Instance) {
 	m.mu.Lock()
@@ -93,7 +95,7 @@ func (m *Manager) Remove(id string) {
 	}
 }
 
-func NewInstance(id, name, apiKey string) (*Instance, error) {
+func NewInstance(id, companyID, name, apiKey string) (*Instance, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	client, container, err := whatsapp.NewClient(id)
 	if err != nil {
@@ -102,6 +104,7 @@ func NewInstance(id, name, apiKey string) (*Instance, error) {
 	}
 	inst := &Instance{
 		ID:                   id,
+		CompanyID:            companyID,
 		Name:                 name,
 		APIKey:               apiKey,
 		Status:               "disconnected",
@@ -125,15 +128,18 @@ func (inst *Instance) saveStatusToDB() {
 }
 
 func (inst *Instance) Connect() error {
+	// Limpa estado anterior para garantir fresh start
 	if inst.WAClient != nil {
 		inst.WAClient.Disconnect()
 	}
 	inst.cancel()
+	inst.LastQR = "" // Limpa o QR anterior para não mostrar lixo no frontend
+
 	ctx, cancel := context.WithCancel(context.Background())
 	inst.ctx = ctx
 	inst.cancel = cancel
 
-	client, container, err := whatsapp.NewClient(inst.ID)
+	client, container, err := whatsapp.NewClient(inst.Phone)
 	if err != nil {
 		return err
 	}
@@ -161,25 +167,20 @@ func (inst *Instance) Connect() error {
 		}()
 	}
 
-	err = inst.WAClient.Connect()
+	log.Printf("[CONNECT] Chamando Connect() para instância %s...", inst.Name)
+	inst.Status = "connecting"
+	inst.BroadcastSSE(`{"event":"connecting","data":{}}`)
+	inst.saveStatusToDB()
 
-	// Verificar e atualizar status após Connect
-	go func() {
-		time.Sleep(3 * time.Second)
-		if inst.WAClient.IsConnected() {
-			inst.Status = "connected"
-			if inst.WAClient.Store.ID != nil {
-				inst.Phone = inst.WAClient.Store.ID.User
-			}
-			log.Printf("[CONNECT] Instance %s connected - Phone: %s", inst.Name, inst.Phone)
-			inst.BroadcastSSE(fmt.Sprintf(`{"event":"connected","data":{"phone":"%s"}}`, inst.Phone))
-			inst.saveStatusToDB()
-		} else {
-			inst.Status = "disconnected"
-			log.Printf("[CONNECT] Instance %s failed to connect", inst.Name)
-			inst.saveStatusToDB()
-		}
-	}()
+	err = inst.WAClient.Connect()
+	if err != nil {
+		log.Printf("[CONNECT] Erro ao conectar instância %s: %v", inst.Name, err)
+		inst.Status = "disconnected"
+		inst.BroadcastSSE(`{"event":"disconnected","data":{}}`)
+		inst.saveStatusToDB()
+	} else {
+		log.Printf("[CONNECT] Connect() chamado com sucesso para %s (aguardando evento Connected)", inst.Name)
+	}
 
 	go inst.keepAlive()
 	return err
@@ -196,6 +197,17 @@ func (inst *Instance) Disconnect() {
 	inst.saveStatusToDB()
 }
 
+func (inst *Instance) Logout() error {
+	if inst.WAClient != nil && inst.WAClient.IsConnected() {
+		err := inst.WAClient.Logout(context.Background())
+		if err != nil {
+			log.Printf("[LOGOUT] Erro ao fazer logout no WhatsApp: %v", err)
+		}
+	}
+	inst.Disconnect()
+	return nil
+}
+
 func (inst *Instance) keepAlive() {
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
@@ -206,15 +218,13 @@ func (inst *Instance) keepAlive() {
 		case <-ticker.C:
 			if inst.WAClient.IsConnected() {
 				inst.WAClient.SendPresence(context.Background(), types.PresenceAvailable)
-				if inst.Status != "connected" {
-					inst.Status = "connected"
-					if inst.WAClient.Store.ID != nil {
+					if inst.WAClient.Store.ID != nil && inst.Status != "connected" {
+						inst.Status = "connected"
 						inst.Phone = inst.WAClient.Store.ID.User
+						log.Printf("[KEEPALIVE] Instance %s reconnected - Phone: %s", inst.Name, inst.Phone)
+						inst.BroadcastSSE(fmt.Sprintf(`{"event":"connected","data":{"phone":"%s"}}`, inst.Phone))
+						inst.saveStatusToDB()
 					}
-					log.Printf("[KEEPALIVE] Instance %s reconnected - Phone: %s", inst.Name, inst.Phone)
-					inst.BroadcastSSE(fmt.Sprintf(`{"event":"connected","data":{"phone":"%s"}}`, inst.Phone))
-					inst.saveStatusToDB()
-				}
 			} else {
 				if inst.Status == "connected" {
 					inst.Status = "disconnected"
@@ -243,6 +253,13 @@ func (inst *Instance) handleEvent(evt interface{}) {
 		inst.Phone = ""
 		log.Printf("[EVENT] Instance %s Disconnected", inst.Name)
 		inst.BroadcastSSE(`{"event":"disconnected","data":{}}`)
+		inst.saveStatusToDB()
+	case *events.LoggedOut:
+		inst.Status = "disconnected"
+		inst.Phone = ""
+		inst.LastQR = ""
+		log.Printf("[EVENT] Instance %s Logged Out from Phone", inst.Name)
+		inst.BroadcastSSE(`{"event":"disconnected","reason":"logged_out","data":{}}`)
 		inst.saveStatusToDB()
 	case *events.Message:
 		if v.Info.IsFromMe {
@@ -302,22 +319,43 @@ func (inst *Instance) processMessage(v *events.Message) {
 
 	inst.broadcastMessage(msgData)
 	go inst.sendWebhook(msgData)
+
+	// SDR Nativo: Dispara o hook se estiver definido e não for grupo
+	if MessageHook != nil && !isGroup && msgData["message"].(string) != "" {
+		go MessageHook(inst.CompanyID, senderNumber, msgData["message"].(string), inst)
+	}
 }
 
 func (inst *Instance) processAudio(v *events.Message, msgData map[string]interface{}) {
+	log.Printf("[AUDIO] Inciando processamento de áudio para %s", msgData["sender_number"])
 	audioMsg := v.Message.GetAudioMessage()
+	
+	// whatsmeow 0.2.x uses Download(ctx, msg) or Download(msg). We will add error logging.
 	audioData, err := inst.WAClient.Download(context.Background(), audioMsg)
 	if err != nil {
+		log.Printf("[AUDIO-ERROR] Falha no download do whatsmeow: %v", err)
 		inst.broadcastMessage(msgData)
 		go inst.sendWebhook(msgData)
 		return
 	}
+	
+	log.Printf("[AUDIO] Download concluído, %d bytes. TranscriptionEnabled: %v", len(audioData), inst.TranscriptionEnabled)
 	if inst.TranscriptionEnabled {
-		text, _ := transcriber.Transcribe(audioData, "audio.ogg")
-		msgData["transcription"] = text
+		text, err := transcriber.Transcribe(audioData, "audio.ogg")
+		if err != nil {
+			log.Printf("[AUDIO-ERROR] Erro na transcrição: %v", err)
+		} else {
+			log.Printf("[AUDIO] Transcrição bem sucedida: %s", text)
+			msgData["transcription"] = text
+		}
 	}
 	inst.broadcastMessage(msgData)
 	go inst.sendWebhook(msgData)
+
+	// SDR Nativo para Áudio Transcrito
+	if MessageHook != nil && msgData["transcription"] != nil && msgData["transcription"].(string) != "" {
+		go MessageHook(inst.CompanyID, msgData["sender_number"].(string), msgData["transcription"].(string), inst)
+	}
 }
 
 func (inst *Instance) sendWebhook(msgData map[string]interface{}) {
@@ -331,7 +369,15 @@ func (inst *Instance) sendWebhook(msgData map[string]interface{}) {
 		"data":       msgData,
 	}
 	jsonBytes, _ := json.Marshal(payload)
-	http.Post(inst.WebhookURL, "application/json", bytes.NewReader(jsonBytes))
+	resp, err := http.Post(inst.WebhookURL, "application/json", bytes.NewReader(jsonBytes))
+	if err != nil {
+		log.Printf("[WEBHOOK-ERROR] Instance %s failed to send to %s: %v", inst.Name, inst.WebhookURL, err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		log.Printf("[WEBHOOK-ERROR] Instance %s received status %d from %s", inst.Name, resp.StatusCode, inst.WebhookURL)
+	}
 }
 
 func (inst *Instance) broadcastMessage(msgData map[string]interface{}) {

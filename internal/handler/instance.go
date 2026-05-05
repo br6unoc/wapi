@@ -2,28 +2,45 @@ package handler
 
 import (
 	"net/http"
-        "log"
 	"wapi/internal/instance"
-        "wapi/internal/service"
+	"wapi/internal/model"
+	"wapi/internal/service"
 	"wapi/store/postgres"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
+// Helper para pegar companyID do contexto (injetado pelo AuthMiddleware)
+func getCompanyID(c *gin.Context) (string, bool) {
+	val, exists := c.Get("company_id")
+	if !exists {
+		return "", false
+	}
+	return val.(string), true
+}
+
 func ListInstances(c *gin.Context) {
+	companyID, ok := getCompanyID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "não autorizado"})
+		return
+	}
+
 	instances := instance.Global.GetAll()
-	result := make([]gin.H, 0, len(instances))
+	result := make([]gin.H, 0)
 	for _, inst := range instances {
-		// Validação rigorosa: só considera conectado se tiver Phone E status connected
+		if inst.CompanyID != companyID {
+			continue // Pula instâncias de outras empresas
+		}
+
 		actualStatus := "disconnected"
 		actualPhone := inst.Phone
-		
+
 		if inst.Status == "connected" && inst.Phone != "" {
 			actualStatus = "connected"
 		}
-		
-		log.Printf("[LIST] Instance %s - Status: %s, Phone: %s", inst.Name, actualStatus, actualPhone)
+
 		result = append(result, gin.H{
 			"id":     inst.ID,
 			"name":   inst.Name,
@@ -35,6 +52,12 @@ func ListInstances(c *gin.Context) {
 }
 
 func CreateInstance(c *gin.Context) {
+	companyID, ok := getCompanyID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "não autorizado"})
+		return
+	}
+
 	var req struct {
 		Name string `json:"name" binding:"required"`
 	}
@@ -43,18 +66,35 @@ func CreateInstance(c *gin.Context) {
 		return
 	}
 
+	// Verifica limite de instâncias
+	var company model.Company
+	if err := postgres.GORM.First(&company, "id = ?", companyID).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "erro ao verificar limites"})
+		return
+	}
+
+	var instanceCount int64
+	postgres.GORM.Model(&model.Instance{}).Where("company_id = ?", companyID).Count(&instanceCount)
+
+	if int(instanceCount) >= company.WhatsappLimit {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "Limite de instâncias atingido para o seu plano. Entre em contato com o suporte para aumentar seu limite.",
+		})
+		return
+	}
+
 	id := uuid.New().String()
 	apiKey := uuid.New().String()
 
-	inst, err := instance.NewInstance(id, req.Name, apiKey)
+	inst, err := instance.NewInstance(id, companyID, req.Name, apiKey)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	_, err = postgres.DB.Exec(
-		`INSERT INTO instances (id, name, api_key) VALUES ($1, $2, $3)`,
-		id, req.Name, apiKey,
+		`INSERT INTO instances (id, company_id, name, api_key) VALUES ($1, $2, $3, $4)`,
+		id, companyID, req.Name, apiKey,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "erro ao salvar instância"})
@@ -71,11 +111,25 @@ func CreateInstance(c *gin.Context) {
 	})
 }
 
-func GetInstance(c *gin.Context) {
-	name := c.Param("name")
-	inst, ok := instance.Global.GetByName(name)
+// Para as demais rotas que pegam pelo 'name', precisamos garantir que a instância pertence ao companyID
+func getInstanceOwned(c *gin.Context) (*instance.Instance, bool) {
+	companyID, ok := getCompanyID(c)
 	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "não autorizado"})
+		return nil, false
+	}
+	name := c.Param("name")
+	inst, found := instance.Global.GetByName(name)
+	if !found || inst.CompanyID != companyID {
 		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
+		return nil, false
+	}
+	return inst, true
+}
+
+func GetInstance(c *gin.Context) {
+	inst, ok := getInstanceOwned(c)
+	if !ok {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -92,10 +146,8 @@ func GetInstance(c *gin.Context) {
 }
 
 func DeleteInstance(c *gin.Context) {
-	name := c.Param("name")
-	inst, ok := instance.Global.GetByName(name)
+	inst, ok := getInstanceOwned(c)
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
 		return
 	}
 
@@ -106,10 +158,8 @@ func DeleteInstance(c *gin.Context) {
 }
 
 func GetStatus(c *gin.Context) {
-	name := c.Param("name")
-	inst, ok := instance.Global.GetByName(name)
+	inst, ok := getInstanceOwned(c)
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
 		return
 	}
 
@@ -126,21 +176,16 @@ func GetStatus(c *gin.Context) {
 }
 
 func GetQRCode(c *gin.Context) {
-	name := c.Param("name")
-	inst, ok := instance.Global.GetByName(name)
+	inst, ok := getInstanceOwned(c)
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
 		return
 	}
-
 	c.JSON(http.StatusOK, gin.H{"qrcode": inst.LastQR, "status": inst.Status})
 }
 
 func ConnectInstance(c *gin.Context) {
-	name := c.Param("name")
-	inst, ok := instance.Global.GetByName(name)
+	inst, ok := getInstanceOwned(c)
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
 		return
 	}
 
@@ -153,24 +198,20 @@ func ConnectInstance(c *gin.Context) {
 }
 
 func DisconnectInstance(c *gin.Context) {
-	name := c.Param("name")
-	inst, ok := instance.Global.GetByName(name)
+	inst, ok := getInstanceOwned(c)
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
 		return
 	}
 
-	inst.Disconnect()
+	inst.Logout()
 	postgres.DB.Exec(`UPDATE instances SET status = 'disconnected' WHERE id = $1`, inst.ID)
 
 	c.JSON(http.StatusOK, gin.H{"message": "instância desconectada"})
 }
 
 func UpdateWebhook(c *gin.Context) {
-	name := c.Param("name")
-	inst, ok := instance.Global.GetByName(name)
+	inst, ok := getInstanceOwned(c)
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
 		return
 	}
 
@@ -189,10 +230,8 @@ func UpdateWebhook(c *gin.Context) {
 }
 
 func UpdateConfig(c *gin.Context) {
-	name := c.Param("name")
-	inst, ok := instance.Global.GetByName(name)
+	inst, ok := getInstanceOwned(c)
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
 		return
 	}
 
@@ -225,10 +264,8 @@ func UpdateConfig(c *gin.Context) {
 }
 
 func RegenerateAPIKey(c *gin.Context) {
-	name := c.Param("name")
-	inst, ok := instance.Global.GetByName(name)
+	inst, ok := getInstanceOwned(c)
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
 		return
 	}
 
@@ -239,11 +276,11 @@ func RegenerateAPIKey(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"api_key": newKey})
 }
 
+// ATENÇÃO: Essa rota pode ser chamada sem JWT se o front não passar, 
+// mas no main.go agrupamos com AuthMiddleware, então o token estará presente.
 func SSEHandler(c *gin.Context) {
-	name := c.Param("name")
-	inst, ok := instance.Global.GetByName(name)
+	inst, ok := getInstanceOwned(c)
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
 		return
 	}
 
@@ -261,7 +298,6 @@ func SSEHandler(c *gin.Context) {
 		c.Writer.Flush()
 	}
 	
-	// Enviar status atual imediatamente ao conectar
 	if inst.Status == "connected" && inst.Phone != "" {
 		c.SSEvent("message", `{"event":"connected","data":{"phone":"`+inst.Phone+`","qrcode":""}}`)
 		c.Writer.Flush()
@@ -282,10 +318,8 @@ func SSEHandler(c *gin.Context) {
 }
 
 func GetGroups(c *gin.Context) {
-	name := c.Param("name")
-	inst, ok := instance.Global.GetByName(name)
+	inst, ok := getInstanceOwned(c)
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
 		return
 	}
 

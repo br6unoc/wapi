@@ -20,6 +20,7 @@ type Config struct {
 	WhisperURL       string
 	AdminUser        string
 	AdminPassword    string
+	BaseURL          string
 }
 
 var App Config
@@ -34,14 +35,15 @@ func Load() {
 		PostgresHost:     getEnv("POSTGRES_HOST", "localhost"),
 		PostgresPort:     getEnv("POSTGRES_PORT", "5432"),
 		PostgresUser:     getEnv("POSTGRES_USER", "wapi"),
-		PostgresPassword: getEnv("POSTGRES_PASSWORD", "wapi123"),
+		PostgresPassword: getEnv("POSTGRES_PASSWORD", ""),
 		PostgresDB:       getEnv("POSTGRES_DB", "wapi"),
 		RedisHost:        getEnv("REDIS_HOST", "localhost"),
 		RedisPort:        getEnv("REDIS_PORT", "6379"),
-		JWTSecret:        getEnv("JWT_SECRET", "chave-secreta-padrao"),
+		JWTSecret:        getEnv("JWT_SECRET", ""),
 		WhisperURL:       getEnv("WHISPER_URL", "http://localhost:9000"),
 		AdminUser:        getEnv("ADMIN_USER", "admin"),
-		AdminPassword:    getEnv("ADMIN_PASSWORD", "admin123"),
+		AdminPassword:    getEnv("ADMIN_PASSWORD", ""),
+		BaseURL:          getEnv("BASE_URL", ""),
 	}
 }
 

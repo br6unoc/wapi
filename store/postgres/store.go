@@ -3,12 +3,19 @@ package postgres
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"wapi/config"
+	"wapi/internal/model"
 
-	_ "github.com/lib/pq"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
-var DB *sql.DB
+var (
+	DB   *sql.DB
+	GORM *gorm.DB
+)
 
 func Connect() error {
 	dsn := fmt.Sprintf(
@@ -20,53 +27,47 @@ func Connect() error {
 		config.App.PostgresDB,
 	)
 
-	db, err := sql.Open("postgres", dsn)
+	// Configuração do GORM
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Info),
+	})
+
 	if err != nil {
-		return fmt.Errorf("erro ao abrir conexão: %w", err)
+		return fmt.Errorf("erro ao conectar no postgres via GORM: %w", err)
 	}
 
-	if err := db.Ping(); err != nil {
-		return fmt.Errorf("erro ao conectar no postgres: %w", err)
+	GORM = db
+
+	// Extrai o *sql.DB para manter compatibilidade com código legado
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("erro ao extrair sql.DB do GORM: %w", err)
 	}
 
-	DB = db
+	DB = sqlDB
 	return nil
 }
 
 func Migrate() error {
-	query := `
-	CREATE TABLE IF NOT EXISTS users (
-		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-		username VARCHAR(255) UNIQUE NOT NULL,
-		password VARCHAR(255) NOT NULL,
-		created_at TIMESTAMP DEFAULT NOW()
-	);
+	log.Println("Iniciando auto-migration com GORM...")
+	
+	// A ordem importa para garantir que as FKs sejam criadas corretamente
+	err := GORM.AutoMigrate(
+		&model.Company{},
+		&model.User{},
+		&model.Instance{},
+		&model.Lead{},
+		&model.SystemConfig{},
+		&model.SDRAgent{},
+		&model.ChatHistory{},
+		&model.GlobalConfig{},
+		&model.Distributor{},
+	)
 
-	CREATE TABLE IF NOT EXISTS instances (
-		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-		name VARCHAR(255) UNIQUE NOT NULL,
-		api_key VARCHAR(255) UNIQUE NOT NULL,
-		webhook_url TEXT DEFAULT '',
-		transcription_enabled BOOLEAN DEFAULT FALSE,
-		typing_delay_min INTEGER DEFAULT 1000,
-		typing_delay_max INTEGER DEFAULT 3000,
-		status VARCHAR(50) DEFAULT 'disconnected',
-		phone VARCHAR(50) DEFAULT '',
-		created_at TIMESTAMP DEFAULT NOW(),
-		updated_at TIMESTAMP DEFAULT NOW()
-	);
-        CREATE TABLE IF NOT EXISTS api_tokens (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                name VARCHAR(255) NOT NULL,
-                token TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT NOW()
-        );
-	`
-
-	_, err := DB.Exec(query)
 	if err != nil {
-		return fmt.Errorf("erro ao executar migration: %w", err)
+		return fmt.Errorf("erro ao executar auto-migration: %w", err)
 	}
 
+	log.Println("Auto-migration finalizada com sucesso!")
 	return nil
 }

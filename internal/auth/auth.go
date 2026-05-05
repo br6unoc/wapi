@@ -1,50 +1,52 @@
 package auth
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 	"wapi/config"
+	"wapi/internal/model"
 	"wapi/store/postgres"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 type Claims struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
+	UserID    string `json:"user_id"`
+	CompanyID string `json:"company_id"`
+	Username  string `json:"username"`
+	Role      string `json:"role"`
 	jwt.RegisteredClaims
 }
 
 func Login(username, password string) (string, error) {
-	var id, hashedPassword string
+	var user model.User
+	// Busca por username ou email
+	result := postgres.GORM.Where("username = ? OR email = ?", username, username).First(&user)
 
-	err := postgres.DB.QueryRow(
-		"SELECT id, password FROM users WHERE username = $1",
-		username,
-	).Scan(&id, &hashedPassword)
-
-	if err == sql.ErrNoRows {
-		return "", errors.New("usuário não encontrado")
-	}
-	if err != nil {
-		return "", fmt.Errorf("erro ao buscar usuário: %w", err)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return "", errors.New("usuário não encontrado")
+		}
+		return "", fmt.Errorf("erro ao buscar usuário: %w", result.Error)
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password)); err != nil {
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
 		return "", errors.New("senha incorreta")
 	}
 
-	return generateToken(id, username)
+	return generateToken(user)
 }
 
-func generateToken(userID, username string) (string, error) {
+func generateToken(user model.User) (string, error) {
 	claims := Claims{
-		UserID:   userID,
-		Username: username,
+		UserID:    user.ID.String(),
+		CompanyID: user.CompanyID.String(),
+		Username:  user.Username,
+		Role:      user.Role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -72,14 +74,23 @@ func ValidateToken(tokenStr string) (*Claims, error) {
 }
 
 func CreateAdminIfNotExists(username, password string) error {
-	var count int
-	err := postgres.DB.QueryRow("SELECT COUNT(*) FROM users WHERE username = $1", username).Scan(&count)
-	if err != nil {
-		return fmt.Errorf("erro ao verificar usuário: %w", err)
-	}
+	var count int64
+	postgres.GORM.Model(&model.User{}).Where("role = ?", "SUPER_ADMIN").Count(&count)
 
 	if count > 0 {
 		return nil
+	}
+
+	// Cria a empresa padrão para o Super Admin
+	company := model.Company{
+		Name:       "Super Admin Corp",
+		AdminEmail: "admin@admin.com",
+		Status:     "Ativo",
+		ExpiryDate: time.Now().AddDate(100, 0, 0), // Expira em 100 anos
+	}
+
+	if err := postgres.GORM.Create(&company).Error; err != nil {
+		return fmt.Errorf("erro ao criar empresa admin: %w", err)
 	}
 
 	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -87,14 +98,72 @@ func CreateAdminIfNotExists(username, password string) error {
 		return fmt.Errorf("erro ao gerar hash: %w", err)
 	}
 
-	id := uuid.New().String()
-	_, err = postgres.DB.Exec(
-		"INSERT INTO users (id, username, password) VALUES ($1, $2, $3)",
-		id, username, string(hashed),
-	)
-	if err != nil {
+	user := model.User{
+		CompanyID:    company.ID,
+		Username:     username,
+		Email:        "admin@admin.com",
+		PasswordHash: string(hashed),
+		Role:         "SUPER_ADMIN",
+	}
+
+	if err := postgres.GORM.Create(&user).Error; err != nil {
 		return fmt.Errorf("erro ao criar admin: %w", err)
 	}
 
 	return nil
+}
+
+// SeedFromEnv é chamado durante a inicialização para criar o usuário master do SetupOrion
+func SeedFromEnv() error {
+	email := os.Getenv("INITIAL_ADMIN_EMAIL")
+	password := os.Getenv("INITIAL_ADMIN_PASSWORD")
+
+	if email == "" || password == "" {
+		return nil // Se não houver variaveis, segue a vida normal
+	}
+
+	var count int64
+	postgres.GORM.Model(&model.User{}).Where("role = ?", "SUPER_ADMIN").Count(&count)
+	if count > 0 {
+		return nil // Se já existe um admin, não tenta criar de novo
+	}
+
+	company := model.Company{
+		Name:       "Super Admin Corp",
+		AdminEmail: email,
+		Status:     "Ativo",
+		ExpiryDate: time.Now().AddDate(100, 0, 0), // 100 anos
+	}
+
+	if err := postgres.GORM.Create(&company).Error; err != nil {
+		return fmt.Errorf("erro ao criar empresa via seed: %w", err)
+	}
+
+	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("erro ao gerar hash via seed: %w", err)
+	}
+
+	user := model.User{
+		CompanyID:    company.ID,
+		Username:     email,
+		Email:        email,
+		PasswordHash: string(hashed),
+		Role:         "SUPER_ADMIN",
+	}
+
+	if err := postgres.GORM.Create(&user).Error; err != nil {
+		return fmt.Errorf("erro ao criar admin via seed: %w", err)
+	}
+
+	fmt.Printf("✅ Seed: Usuário master %s criado com sucesso.\n", email)
+	return nil
+}
+
+func HashPassword(password string) (string, error) {
+	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hashed), nil
 }

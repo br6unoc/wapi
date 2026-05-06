@@ -3,6 +3,7 @@ package auth
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"time"
 	"wapi/config"
@@ -73,7 +74,13 @@ func ValidateToken(tokenStr string) (*Claims, error) {
 	return claims, nil
 }
 
-func CreateAdminIfNotExists(username, password string) error {
+func CreateAdminIfNotExists(email, password string) error {
+	// Se não houver email ou senha configurados, não cria nada
+	if email == "" || password == "" {
+		log.Println("INITIAL_ADMIN_EMAIL ou INITIAL_ADMIN_PASSWORD não definidos, pulando criação de admin.")
+		return nil
+	}
+
 	var count int64
 	postgres.GORM.Model(&model.User{}).Where("role = ?", "SUPER_ADMIN").Count(&count)
 
@@ -84,7 +91,7 @@ func CreateAdminIfNotExists(username, password string) error {
 	// Cria a empresa padrão para o Super Admin
 	company := model.Company{
 		Name:       "Super Admin Corp",
-		AdminEmail: "admin@admin.com",
+		AdminEmail: email,
 		Status:     "Ativo",
 		ExpiryDate: time.Now().AddDate(100, 0, 0), // Expira em 100 anos
 	}
@@ -100,8 +107,8 @@ func CreateAdminIfNotExists(username, password string) error {
 
 	user := model.User{
 		CompanyID:    company.ID,
-		Username:     username,
-		Email:        "admin@admin.com",
+		Username:     email,
+		Email:        email,
 		PasswordHash: string(hashed),
 		Role:         "SUPER_ADMIN",
 	}
@@ -110,6 +117,7 @@ func CreateAdminIfNotExists(username, password string) error {
 		return fmt.Errorf("erro ao criar admin: %w", err)
 	}
 
+	log.Printf("Usuário SUPER_ADMIN criado com sucesso: %s", email)
 	return nil
 }
 

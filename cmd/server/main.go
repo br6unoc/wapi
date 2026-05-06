@@ -30,10 +30,6 @@ func main() {
 	if err := auth.CreateAdminIfNotExists(config.App.AdminUser, config.App.AdminPassword); err != nil {
 		log.Fatalf("Erro ao criar admin: %v", err)
 	}
-	
-	if err := auth.SeedFromEnv(); err != nil {
-		log.Printf("Aviso ao rodar Seed do SetupOrion: %v", err)
-	}
 	log.Println("Usuário admin pronto!")
 
 	if err := loadInstancesFromDB(); err != nil {

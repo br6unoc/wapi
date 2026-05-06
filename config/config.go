@@ -41,8 +41,8 @@ func Load() {
 		RedisPort:        getEnv("REDIS_PORT", "6379"),
 		JWTSecret:        getEnv("JWT_SECRET", ""),
 		WhisperURL:       getEnv("WHISPER_URL", "http://localhost:9000"),
-		AdminUser:        getEnv("ADMIN_USER", "admin"),
-		AdminPassword:    getEnv("ADMIN_PASSWORD", ""),
+		AdminUser:        getEnv("INITIAL_ADMIN_EMAIL", "admin@admin.com"),
+		AdminPassword:    getEnv("INITIAL_ADMIN_PASSWORD", ""),
 		BaseURL:          getEnv("BASE_URL", ""),
 	}
 }

@@ -159,29 +159,18 @@ func main() {
 		instancesGroup.PATCH("/:name/config", handler.UpdateConfig)
 	}
 
-	// Servir o frontend React: rota raiz e wildcard para o SPA
+	// Servir o frontend React
 	r.Static("/assets", "./public/assets")
 	r.StaticFile("/favicon.ico", "./public/favicon.ico")
 	r.StaticFile("/vite.svg", "./public/vite.svg")
 
-	// Rota explícita para "/" — necessária no Gin para não retornar 404 implícito
+	// Rota raiz explícita
 	r.GET("/", func(c *gin.Context) {
 		c.File("./public/index.html")
 	})
 
-	// Wildcard para todas as sub-rotas do SPA (ex: /login, /dashboard, etc.)
-	r.GET("/*filepath", func(c *gin.Context) {
-		filepath := c.Param("filepath")
-		// Se o caminho for um arquivo estático real, serve ele
-		if _, err := os.Stat("./public" + filepath); err == nil {
-			c.File("./public" + filepath)
-			return
-		}
-		// Caso contrário, entrega o index.html para o React Router lidar
-		c.File("./public/index.html")
-	})
-
-	// NoRoute como fallback adicional de segurança
+	// Fallback para SPA: captura qualquer rota não definida (ex: /login, /dashboard)
+	// r.NoRoute NÃO conflita com rotas existentes, diferente do wildcard /*filepath
 	r.NoRoute(func(c *gin.Context) {
 		if _, err := os.Stat("./public/index.html"); os.IsNotExist(err) {
 			log.Println("[ERRO] index.html não encontrado na pasta ./public!")

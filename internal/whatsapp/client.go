@@ -7,6 +7,7 @@ import (
 
 	_ "github.com/lib/pq"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	waLog "go.mau.fi/whatsmeow/util/log"
@@ -35,13 +36,10 @@ func NewClient(instanceID string) (*whatsmeow.Client, *sqlstore.Container, error
 		return nil, nil, fmt.Errorf("erro ao criar store postgres: %w", err)
 	}
 
-	// Buscar device por JID se existir registro para esta instância
-	// O instanceID será usado como User do JID
-	jid := types.NewJID(instanceID, types.DefaultUserServer)
-	
-	device, err := container.GetDevice(context.Background(), jid)
+	// Buscar sessão existente: usa GetFirstDevice para reaproveitar sessão salva
+	var device *store.Device
+	device, err = container.GetFirstDevice(context.Background())
 	if err != nil || device == nil {
-		// Device não existe ou erro - criar novo
 		device = container.NewDevice()
 	}
 

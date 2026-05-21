@@ -166,14 +166,35 @@ func loadInstancesFromDB() error {
 
 	log.Printf("%d instância(s) carregada(s) do banco de dados", count)
 
-	// Reconecta em background as instâncias que estavam conectadas
+	// Reconecta em background as instâncias que estavam conectadas.
+	// Se não reconectar em 60s, faz logout no celular.
 	if len(toReconnect) > 0 {
 		go func() {
 			for _, inst := range toReconnect {
 				log.Printf("[STARTUP] Reconectando instância %s...", inst.Name)
 				if err := inst.Connect(); err != nil {
 					log.Printf("[STARTUP] Erro ao reconectar %s: %v", inst.Name, err)
+					continue
 				}
+				// Aguarda até 60s para confirmar reconexão
+				go func(i *instance.Instance) {
+					deadline := time.Now().Add(60 * time.Second)
+					for time.Now().Before(deadline) {
+						time.Sleep(5 * time.Second)
+						if i.Status == "connected" {
+							log.Printf("[STARTUP] Instância %s reconectada com sucesso.", i.Name)
+							return
+						}
+					}
+					// Não reconectou em 60s: logout para notificar o celular
+					log.Printf("[STARTUP] Instância %s não reconectou em 60s, fazendo logout.", i.Name)
+					if i.WAClient != nil {
+						i.WAClient.Logout(context.Background())
+					}
+					i.Status = "disconnected"
+					i.Phone = ""
+					i.SaveStatusToDB()
+				}(inst)
 			}
 		}()
 	}

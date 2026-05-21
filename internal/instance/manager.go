@@ -129,6 +129,11 @@ func NewInstance(id, name, apiKey string) (*Instance, error) {
 	return inst, nil
 }
 
+// SaveStatusToDB salva o status atual no banco (exportado para uso externo)
+func (inst *Instance) SaveStatusToDB() {
+	inst.saveStatusToDB()
+}
+
 // Helper: salvar status no banco de dados
 func (inst *Instance) saveStatusToDB() {
 	postgres.DB.Exec(`UPDATE instances SET status = $1, phone = $2 WHERE id = $3`,
@@ -216,11 +221,9 @@ func (inst *Instance) keepAlive() {
 		case <-ticker.C:
 			if inst.WAClient.IsConnected() {
 				inst.WAClient.SendPresence(context.Background(), types.PresenceAvailable)
-				if inst.Status != "connected" {
+				if inst.Status != "connected" && inst.WAClient.Store.ID != nil {
 					inst.Status = "connected"
-					if inst.WAClient.Store.ID != nil {
-						inst.Phone = inst.WAClient.Store.ID.User
-					}
+					inst.Phone = inst.WAClient.Store.ID.User
 					log.Printf("[KEEPALIVE] Instance %s reconnected - Phone: %s", inst.Name, inst.Phone)
 					inst.BroadcastSSE(fmt.Sprintf(`{"event":"connected","data":{"phone":"%s"}}`, inst.Phone))
 					inst.saveStatusToDB()

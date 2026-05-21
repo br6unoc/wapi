@@ -68,5 +68,9 @@ func Migrate() error {
 		return fmt.Errorf("erro ao executar migration: %w", err)
 	}
 
+	// Corrige colunas residuais de versões anteriores que possam bloquear INSERTs
+	DB.Exec(`ALTER TABLE instances ALTER COLUMN company_id DROP NOT NULL`)
+	DB.Exec(`ALTER TABLE users ALTER COLUMN company_id DROP NOT NULL`)
+
 	return nil
 }

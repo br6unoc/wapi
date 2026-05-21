@@ -5,40 +5,27 @@ import (
 	"fmt"
 	"os"
 
-	_ "github.com/lib/pq"
 	"go.mau.fi/whatsmeow"
-	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	waLog "go.mau.fi/whatsmeow/util/log"
+	_ "github.com/mattn/go-sqlite3"
 )
 
+const sessionsDir = "/app/sessions"
+
 func NewClient(instanceID string) (*whatsmeow.Client, *sqlstore.Container, error) {
-	pgHost := os.Getenv("POSTGRES_HOST")
-	pgPort := os.Getenv("POSTGRES_PORT")
-	pgUser := os.Getenv("POSTGRES_USER")
-	pgPass := os.Getenv("POSTGRES_PASSWORD")
-	pgDB := os.Getenv("POSTGRES_DB")
-
-	if pgHost == "" || pgUser == "" || pgPass == "" || pgDB == "" {
-		return nil, nil, fmt.Errorf("variáveis de ambiente do Postgres não configuradas")
+	if err := os.MkdirAll(sessionsDir, 0755); err != nil {
+		return nil, nil, fmt.Errorf("erro ao criar diretório de sessões: %w", err)
 	}
 
-	if pgPort == "" {
-		pgPort = "5432"
-	}
-
-	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		pgHost, pgPort, pgUser, pgPass, pgDB)
-
-	container, err := sqlstore.New(context.Background(), "postgres", dsn, waLog.Noop)
+	dbPath := fmt.Sprintf("%s/%s.db", sessionsDir, instanceID)
+	container, err := sqlstore.New(context.Background(), "sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on", dbPath), waLog.Noop)
 	if err != nil {
-		return nil, nil, fmt.Errorf("erro ao criar store postgres: %w", err)
+		return nil, nil, fmt.Errorf("erro ao criar store sqlite: %w", err)
 	}
 
-	// Buscar sessão existente: usa GetFirstDevice para reaproveitar sessão salva
-	var device *store.Device
-	device, err = container.GetFirstDevice(context.Background())
+	device, err := container.GetFirstDevice(context.Background())
 	if err != nil || device == nil {
 		device = container.NewDevice()
 	}

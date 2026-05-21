@@ -166,17 +166,15 @@ func (inst *Instance) Connect() error {
 	// Verificar e atualizar status após Connect
 	go func() {
 		time.Sleep(3 * time.Second)
-		if inst.WAClient.IsConnected() {
+		if inst.WAClient.IsConnected() && inst.WAClient.Store.ID != nil {
 			inst.Status = "connected"
-			if inst.WAClient.Store.ID != nil {
-				inst.Phone = inst.WAClient.Store.ID.User
-			}
+			inst.Phone = inst.WAClient.Store.ID.User
 			log.Printf("[CONNECT] Instance %s connected - Phone: %s", inst.Name, inst.Phone)
 			inst.BroadcastSSE(fmt.Sprintf(`{"event":"connected","data":{"phone":"%s"}}`, inst.Phone))
 			inst.saveStatusToDB()
 		} else {
 			inst.Status = "disconnected"
-			log.Printf("[CONNECT] Instance %s failed to connect", inst.Name)
+			log.Printf("[CONNECT] Instance %s not authenticated yet (waiting for QR scan)", inst.Name)
 			inst.saveStatusToDB()
 		}
 	}()

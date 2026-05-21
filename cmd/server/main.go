@@ -1,13 +1,19 @@
 package main
 
 import (
+	"context"
 	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 	"wapi/config"
 	"wapi/internal/auth"
 	"wapi/internal/handler"
 	"wapi/internal/instance"
 	"wapi/store/postgres"
-        _ "github.com/lib/pq"
+	_ "github.com/lib/pq"
 
 	"github.com/gin-gonic/gin"
 )
@@ -60,7 +66,7 @@ func main() {
 	// SSE e QR Code — sem autenticação
 	r.GET("/instances/:name/sse", handler.SSEHandler)
 	r.GET("/instances/:name/qrcode", handler.GetQRCode)
-        r.GET("/instances/:name/groups", handler.GetGroups)
+	r.GET("/instances/:name/groups", handler.GetGroups)
 
 	// Envio — usa API Key
 	r.POST("/instances/:name/send/text", handler.APIKeyMiddleware(), handler.SendText)
@@ -85,15 +91,40 @@ func main() {
 	r.StaticFile("/", "./web/index.html")
 	r.Static("/web", "./web")
 
-	log.Printf("Servidor rodando na porta %s", config.App.Port)
-	if err := r.Run(":" + config.App.Port); err != nil {
-		log.Fatalf("Erro ao iniciar servidor: %v", err)
+	srv := &http.Server{
+		Addr:    ":" + config.App.Port,
+		Handler: r,
 	}
+
+	// Graceful shutdown: captura SIGTERM/SIGINT
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGTERM, syscall.SIGINT)
+
+	go func() {
+		log.Printf("Servidor rodando na porta %s", config.App.Port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Erro ao iniciar servidor: %v", err)
+		}
+	}()
+
+	<-quit
+	log.Println("Sinal recebido, encerrando servidor graciosamente...")
+
+	// Desconecta todas as instâncias WhatsApp antes de sair
+	instance.Global.DisconnectAll()
+	log.Println("Instâncias WhatsApp desconectadas.")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("Erro no shutdown do servidor: %v", err)
+	}
+	log.Println("Servidor encerrado.")
 }
 
 func loadInstancesFromDB() error {
 	rows, err := postgres.DB.Query(
-		`SELECT id, name, api_key, webhook_url, transcription_enabled, typing_delay_min, typing_delay_max FROM instances`,
+		`SELECT id, name, api_key, webhook_url, transcription_enabled, typing_delay_min, typing_delay_max, status FROM instances`,
 	)
 	if err != nil {
 		return err
@@ -101,12 +132,14 @@ func loadInstancesFromDB() error {
 	defer rows.Close()
 
 	count := 0
+	var toReconnect []*instance.Instance
+
 	for rows.Next() {
-		var id, name, apiKey, webhookURL string
+		var id, name, apiKey, webhookURL, status string
 		var transcriptionEnabled bool
 		var typingDelayMin, typingDelayMax int
 
-		if err := rows.Scan(&id, &name, &apiKey, &webhookURL, &transcriptionEnabled, &typingDelayMin, &typingDelayMax); err != nil {
+		if err := rows.Scan(&id, &name, &apiKey, &webhookURL, &transcriptionEnabled, &typingDelayMin, &typingDelayMax, &status); err != nil {
 			log.Printf("Erro ao ler instância: %v", err)
 			continue
 		}
@@ -121,11 +154,29 @@ func loadInstancesFromDB() error {
 		inst.TranscriptionEnabled = transcriptionEnabled
 		inst.TypingDelayMin = typingDelayMin
 		inst.TypingDelayMax = typingDelayMax
+		inst.Status = status
 
 		instance.Global.Add(inst)
+
+		if status == "connected" {
+			toReconnect = append(toReconnect, inst)
+		}
 		count++
 	}
 
 	log.Printf("%d instância(s) carregada(s) do banco de dados", count)
+
+	// Reconecta em background as instâncias que estavam conectadas
+	if len(toReconnect) > 0 {
+		go func() {
+			for _, inst := range toReconnect {
+				log.Printf("[STARTUP] Reconectando instância %s...", inst.Name)
+				if err := inst.Connect(); err != nil {
+					log.Printf("[STARTUP] Erro ao reconectar %s: %v", inst.Name, err)
+				}
+			}
+		}()
+	}
+
 	return nil
 }

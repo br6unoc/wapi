@@ -81,6 +81,18 @@ func (m *Manager) GetAll() []*Instance {
 	return all
 }
 
+func (m *Manager) DisconnectAll() {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, inst := range m.instances {
+		inst.cancel()
+		if inst.WAClient != nil {
+			inst.WAClient.Disconnect()
+		}
+		log.Printf("[SHUTDOWN] Instância %s desconectada.", inst.Name)
+	}
+}
+
 func (m *Manager) Remove(id string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

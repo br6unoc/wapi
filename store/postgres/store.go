@@ -61,6 +61,29 @@ func Migrate() error {
                 token TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT NOW()
         );
+
+	CREATE TABLE IF NOT EXISTS contacts (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		instance_id UUID NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+		phone VARCHAR(50) NOT NULL,
+		name VARCHAR(255) DEFAULT '',
+		created_at TIMESTAMP DEFAULT NOW(),
+		UNIQUE(instance_id, phone)
+	);
+
+	CREATE TABLE IF NOT EXISTS messages (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		instance_id UUID NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+		contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+		direction VARCHAR(3) NOT NULL CHECK (direction IN ('in', 'out')),
+		content TEXT NOT NULL DEFAULT '',
+		type VARCHAR(20) NOT NULL DEFAULT 'text',
+		wa_message_id VARCHAR(255) DEFAULT '',
+		created_at TIMESTAMP DEFAULT NOW()
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages (contact_id, created_at DESC);
+	CREATE INDEX IF NOT EXISTS idx_messages_instance ON messages (instance_id, created_at DESC);
 	`
 
 	_, err := DB.Exec(query)

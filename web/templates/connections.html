@@ -12,7 +12,7 @@ function instanceCard(name, initialStatus, initialPhone) {
     phone: initialPhone,
     loading: false,
     showQR: false,
-    qrData: null,
+    qrUrl: null,
     es: null,
 
     async connect() {
@@ -64,19 +64,18 @@ function instanceCard(name, initialStatus, initialPhone) {
         try { msg = JSON.parse(e.data); } catch { return; }
 
         if (msg.event === 'qr') {
-          this.qrData = msg.data.qrcode;
-          this.showQR = true;
-          this.$nextTick(() => {
-            const canvas = document.getElementById(`qr-canvas-${this.name}`);
-            if (canvas && this.qrData) {
-              QRCode.toCanvas(canvas, this.qrData, { width: 240, margin: 1 }, () => {});
+          const code = msg.data.qrcode;
+          QRCode.toDataURL(code, { width: 256, margin: 2, color: { dark: '#000', light: '#fff' } }, (err, url) => {
+            if (!err) {
+              this.qrUrl = url;
+              this.showQR = true;
             }
           });
         } else if (msg.event === 'connected') {
           this.status = 'connected';
           this.phone = msg.data.phone || '';
           this.showQR = false;
-          this.qrData = null;
+          this.qrUrl = null;
           if (this.es) { this.es.close(); this.es = null; }
         } else if (msg.event === 'disconnected') {
           this.status = 'disconnected';
@@ -87,6 +86,7 @@ function instanceCard(name, initialStatus, initialPhone) {
 
     closeQR() {
       this.showQR = false;
+      this.qrUrl = null;
       if (this.es) { this.es.close(); this.es = null; }
     }
   }
@@ -196,12 +196,22 @@ function createInstance() {
 
       <!-- Modal QR Code -->
       <div x-show="showQR" x-cloak
-        class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-        <div class="bg-white rounded-xl shadow-xl p-6 max-w-xs w-full mx-4 text-center">
-          <h3 class="font-semibold text-gray-800 mb-1">Escanear QR Code</h3>
-          <p class="text-sm text-gray-500 mb-4">Abra o WhatsApp → Dispositivos → Adicionar dispositivo</p>
-          <canvas :id="'qr-canvas-' + name" class="mx-auto rounded-lg"></canvas>
-          <p class="text-xs text-gray-400 mt-3 mb-4">Aguardando escaneamento...</p>
+        class="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+        <div class="bg-white rounded-2xl shadow-2xl p-6 w-full mx-4 text-center" style="max-width:320px">
+          <div class="w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-3" style="background:#1a1f2e">
+            <svg class="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
+            </svg>
+          </div>
+          <h3 class="font-bold text-gray-900 text-base mb-1">Escanear QR Code</h3>
+          <p class="text-xs text-gray-500 mb-4">WhatsApp → Dispositivos vinculados → Vincular dispositivo</p>
+          <div class="bg-gray-50 rounded-xl p-3 mb-4 inline-block">
+            <img :src="qrUrl" class="w-52 h-52 rounded-lg" alt="QR Code">
+          </div>
+          <div class="flex items-center gap-2 justify-center mb-4">
+            <span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>
+            <p class="text-xs text-gray-500">Aguardando escaneamento...</p>
+          </div>
           <button @click="closeQR()"
             class="text-sm text-gray-500 hover:text-gray-700 underline">
             Cancelar

@@ -2,17 +2,21 @@ package handler
 
 import (
 	"encoding/base64"
-        "log"
+	"encoding/json"
 	"fmt"
 	"io"
-	"path/filepath"
-	"time"
+	"log"
 	"net/http"
+	"path/filepath"
 	"strings"
+	"time"
+	"wapi/internal/hub"
 	"wapi/internal/instance"
 	"wapi/internal/service"
+	"wapi/store/postgres"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type SendMediaURLRequest struct {
@@ -42,6 +46,50 @@ func SendText(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	// Salvar mensagem enviada no DB e broadcast
+	go func(instID, instName, phone, message string) {
+		var contactID string
+		if err := postgres.DB.QueryRow(
+			`INSERT INTO contacts (instance_id, phone, name)
+			 VALUES ($1, $2, $3)
+			 ON CONFLICT (instance_id, phone) DO UPDATE SET name = EXCLUDED.name
+			 RETURNING id`,
+			instID, phone, phone,
+		).Scan(&contactID); err != nil {
+			log.Printf("[DB] Erro ao upsert contact (send): %v", err)
+			return
+		}
+		msgID := uuid.New().String()
+		var createdAt string
+		if err := postgres.DB.QueryRow(
+			`INSERT INTO messages (id, instance_id, contact_id, direction, content, type)
+			 VALUES ($1, $2, $3, 'out', $4, 'text')
+			 RETURNING created_at`,
+			msgID, instID, contactID, message,
+		).Scan(&createdAt); err != nil {
+			log.Printf("[DB] Erro ao salvar mensagem enviada: %v", err)
+			return
+		}
+		payload := map[string]interface{}{
+			"event": "new_message",
+			"data": map[string]interface{}{
+				"id":            msgID,
+				"instance_id":   instID,
+				"instance_name": instName,
+				"contact_id":    contactID,
+				"phone":         phone,
+				"name":          phone,
+				"direction":     "out",
+				"content":       message,
+				"type":          "text",
+				"created_at":    createdAt,
+			},
+		}
+		jsonBytes, _ := json.Marshal(payload)
+		hub.Global.Broadcast(jsonBytes)
+	}(inst.ID, inst.Name, number, req.Message)
+
 	c.JSON(http.StatusOK, gin.H{"message": "mensagem enviada com sucesso"})
 }
 

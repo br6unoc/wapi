@@ -1,9 +1,16 @@
 {{ template "layout.html" . }}
 {{ define "title" }}Login — WAPI{{ end }}
 {{ define "content" }}
-<div class="flex items-center justify-center min-h-64 mt-8 sm:mt-16">
+<div class="h-full overflow-auto flex items-center justify-center bg-gray-100 px-4 py-12">
   <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-8 w-full max-w-sm">
-    <h1 class="text-xl font-semibold text-gray-800 mb-6">Entrar</h1>
+    <div class="flex items-center gap-2 mb-6">
+      <div class="w-8 h-8 bg-gray-900 rounded-lg flex items-center justify-center">
+        <span class="text-white text-xs font-bold">W</span>
+      </div>
+      <span class="text-lg font-semibold text-gray-800">WAPI</span>
+    </div>
+    <h1 class="text-xl font-semibold text-gray-800 mb-1">Bem-vindo</h1>
+    <p class="text-sm text-gray-500 mb-6">Faça login para continuar</p>
     {{ if .Error }}
     <div class="mb-4 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3">
       {{ .Error }}
@@ -13,15 +20,15 @@
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">Usuário</label>
         <input type="text" name="username" autocomplete="username" required
-          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-800 focus:border-gray-800">
       </div>
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">Senha</label>
         <input type="password" name="password" autocomplete="current-password" required
-          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-800 focus:border-gray-800">
       </div>
       <button type="submit"
-        class="w-full bg-blue-600 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-blue-700 transition-colors">
+        class="w-full bg-gray-900 text-white rounded-lg px-4 py-2.5 text-sm font-medium hover:bg-gray-800 transition-colors">
         Entrar
       </button>
     </form>

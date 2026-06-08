@@ -131,8 +131,7 @@ function conversationsPage() {
 </script>
 
 <div x-data="conversationsPage()" x-init="init()"
-  class="flex -mx-4 sm:-mx-6 -my-6 sm:-my-8"
-  style="height: calc(100dvh - var(--nav-h, 57px)); height: calc(100vh - var(--nav-h, 57px));">
+  class="flex h-full overflow-hidden">
 
   <!-- Painel esquerdo: lista de conversas -->
   <div class="bg-white border-r border-gray-200 flex flex-col flex-shrink-0 w-full sm:w-80"

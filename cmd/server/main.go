@@ -63,10 +63,11 @@ func main() {
 		authGroup.DELETE("/tokens/:id", handler.AuthMiddleware(), handler.DeleteToken)
 	}
 
-	// SSE e QR Code — sem autenticação
+	// SSE, QR Code e WebSocket — sem autenticação de header
 	r.GET("/instances/:name/sse", handler.SSEHandler)
 	r.GET("/instances/:name/qrcode", handler.GetQRCode)
 	r.GET("/instances/:name/groups", handler.GetGroups)
+	r.GET("/ws", handler.WSHandler)
 
 	// Envio — usa API Key
 	r.POST("/instances/:name/send/text", handler.APIKeyMiddleware(), handler.SendText)

@@ -89,6 +89,13 @@ func main() {
 		instances.PATCH("/:name/config", handler.UpdateConfig)
 	}
 
+	// API de conversas — JWT
+	apiGroup := r.Group("/api", handler.AuthMiddleware())
+	{
+		apiGroup.GET("/conversations", handler.ListConversations)
+		apiGroup.GET("/conversations/:name/:phone/messages", handler.GetMessages)
+	}
+
 	// Web UI
 	handler.LoadTemplates()
 	r.GET("/login", handler.WebLogin)

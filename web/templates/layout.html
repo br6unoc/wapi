@@ -9,12 +9,20 @@
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
   <style>[x-cloak]{display:none!important}</style>
+  <script>
+    function _updateNavH() {
+      const nav = document.querySelector('nav');
+      if (nav) document.documentElement.style.setProperty('--nav-h', nav.offsetHeight + 'px');
+    }
+    document.addEventListener('DOMContentLoaded', _updateNavH);
+    window.addEventListener('resize', _updateNavH);
+  </script>
 </head>
 <body class="bg-gray-50 min-h-screen">
-  <nav class="bg-white border-b border-gray-200 px-6 py-4">
+  <nav class="bg-white border-b border-gray-200 px-4 sm:px-6 py-3 sm:py-4">
     <div class="flex items-center justify-between max-w-6xl mx-auto">
-      <div class="flex items-center gap-6">
-        <span class="text-lg font-semibold text-gray-800">WAPI</span>
+      <div class="flex items-center gap-4 sm:gap-6">
+        <span class="text-base sm:text-lg font-semibold text-gray-800">WAPI</span>
         {{ if .Token }}
         <a href="/connections" class="text-sm text-gray-600 hover:text-gray-900 transition-colors">Conexões</a>
         <a href="/conversations" class="text-sm text-gray-600 hover:text-gray-900 transition-colors">Conversas</a>
@@ -25,7 +33,7 @@
       {{ end }}
     </div>
   </nav>
-  <main class="max-w-6xl mx-auto px-6 py-8">
+  <main class="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
     {{ block "content" . }}{{ end }}
   </main>
 </body>

@@ -32,13 +32,15 @@ func WebAuthMiddleware() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		if _, err := auth.ValidateToken(token); err != nil {
+		claims, err := auth.ValidateToken(token)
+		if err != nil {
 			c.SetCookie("wapi_token", "", -1, "/", "", false, false)
 			c.Redirect(http.StatusFound, "/login")
 			c.Abort()
 			return
 		}
 		c.Set("token", token)
+		c.Set("username", claims.Username)
 		c.Next()
 	}
 }
@@ -69,13 +71,16 @@ func WebLogout(c *gin.Context) {
 
 func WebConversations(c *gin.Context) {
 	token, _ := c.Get("token")
+	username, _ := c.Get("username")
 	render(c, http.StatusOK, "conversations.html", gin.H{
-		"Token": token,
+		"Token":    token,
+		"Username": username,
 	})
 }
 
 func WebConnections(c *gin.Context) {
 	token, _ := c.Get("token")
+	username, _ := c.Get("username")
 
 	type InstView struct {
 		Name   string
@@ -99,6 +104,7 @@ func WebConnections(c *gin.Context) {
 
 	render(c, http.StatusOK, "connections.html", gin.H{
 		"Token":     token,
+		"Username":  username,
 		"Instances": views,
 	})
 }

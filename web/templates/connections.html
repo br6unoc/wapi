@@ -128,10 +128,16 @@ function createInstance() {
 <div class="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
 
   <div class="flex items-center justify-between mb-6">
-    <h1 class="text-xl font-semibold text-gray-800">Conexões WhatsApp</h1>
+    <div>
+      <h1 class="text-xl font-semibold text-gray-900">Conexões</h1>
+      <p class="text-sm text-gray-500 mt-0.5">Gerencie suas instâncias WhatsApp</p>
+    </div>
     <button @click="showModal = true"
-      class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
-      + Nova conexão
+      class="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-700 transition-colors">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+      </svg>
+      Nova conexão
     </button>
   </div>
 
@@ -146,34 +152,45 @@ function createInstance() {
   <div class="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
     {{ range .Instances }}
     <div x-data="instanceCard('{{ .Name }}', '{{ .Status }}', '{{ .Phone }}')"
-         class="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+         class="bg-white rounded-xl border border-gray-200 shadow-sm p-5 hover:shadow-md transition-shadow">
 
-      <div class="flex items-center justify-between mb-3">
-        <span class="font-medium text-gray-800">{{ .Name }}</span>
-        <span class="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full"
-          :class="status === 'connected' ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'">
+      <!-- Card header -->
+      <div class="flex items-start justify-between mb-4">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-700 to-slate-900 flex items-center justify-center flex-shrink-0">
+            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"/>
+            </svg>
+          </div>
+          <div>
+            <p class="font-semibold text-gray-800 text-sm">{{ .Name }}</p>
+            <p class="text-xs text-gray-400 mt-0.5" x-text="phone ? '+' + phone : 'Sem número'"></p>
+          </div>
+        </div>
+        <span class="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full flex-shrink-0"
+          :class="status === 'connected' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-gray-100 text-gray-500'">
           <span class="w-1.5 h-1.5 rounded-full"
             :class="status === 'connected' ? 'bg-green-500' : 'bg-gray-400'"></span>
-          <span x-text="status === 'connected' ? 'Conectado' : 'Desconectado'"></span>
+          <span x-text="status === 'connected' ? 'Conectado' : 'Offline'"></span>
         </span>
       </div>
 
-      <p class="text-sm text-gray-500 mb-4 min-h-[1.25rem]">
-        <span x-text="phone ? '+' + phone : '—'"></span>
-      </p>
-
+      <!-- Ações -->
       <div class="flex gap-2">
         <button x-show="status !== 'connected'" @click="connect()" :disabled="loading"
-          class="flex-1 text-sm bg-green-600 text-white rounded-lg px-3 py-1.5 hover:bg-green-700 transition-colors disabled:opacity-50">
+          class="flex-1 text-sm bg-slate-900 text-white rounded-lg px-3 py-2 hover:bg-slate-700 transition-colors disabled:opacity-50 font-medium">
           <span x-text="loading ? 'Aguarde...' : 'Conectar'"></span>
         </button>
         <button x-show="status === 'connected'" @click="disconnect()" :disabled="loading"
-          class="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-1.5 hover:bg-gray-50 transition-colors text-gray-600 disabled:opacity-50">
+          class="flex-1 text-sm border border-gray-200 text-gray-600 rounded-lg px-3 py-2 hover:bg-gray-50 transition-colors disabled:opacity-50 font-medium">
           <span x-text="loading ? 'Aguarde...' : 'Desconectar'"></span>
         </button>
         <button @click="remove()"
-          class="text-sm border border-red-200 text-red-500 rounded-lg px-3 py-1.5 hover:bg-red-50 transition-colors">
-          Remover
+          class="text-sm border border-red-100 text-red-400 rounded-lg px-3 py-2 hover:bg-red-50 hover:border-red-200 transition-colors">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+          </svg>
         </button>
       </div>
 

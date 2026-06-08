@@ -26,9 +26,7 @@ function conversationsPage() {
           headers: { 'Authorization': `Bearer ${TOKEN}` }
         });
         this.conversations = await resp.json();
-      } catch(e) {
-        console.error('Erro ao carregar conversas:', e);
-      }
+      } catch(e) { console.error(e); }
     },
 
     async selectConv(conv) {
@@ -41,9 +39,7 @@ function conversationsPage() {
         });
         this.messages = await resp.json();
         this.$nextTick(() => this.scrollToBottom());
-      } catch(e) {
-        console.error('Erro ao carregar mensagens:', e);
-      }
+      } catch(e) { console.error(e); }
     },
 
     goBack() {
@@ -55,35 +51,23 @@ function conversationsPage() {
     connectWS() {
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       this.ws = new WebSocket(`${proto}//${location.host}/ws?token=${TOKEN}`);
-
       this.ws.onmessage = (e) => {
-        let msg;
-        try { msg = JSON.parse(e.data); } catch { return; }
+        let msg; try { msg = JSON.parse(e.data); } catch { return; }
         if (msg.event !== 'new_message') return;
-
         const d = msg.data;
-
-        const idx = this.conversations.findIndex(
-          c => c.contact_id === d.contact_id && c.instance_id === d.instance_id
-        );
+        const idx = this.conversations.findIndex(c => c.contact_id === d.contact_id && c.instance_id === d.instance_id);
         if (idx > -1) {
           const conv = this.conversations.splice(idx, 1)[0];
           conv.last_message = d.content;
           conv.last_direction = d.direction;
           conv.last_message_at = d.created_at;
           this.conversations.unshift(conv);
-        } else {
-          this.loadConversations();
-        }
-
-        if (this.activeConv &&
-            this.activeConv.contact_id === d.contact_id &&
-            this.activeConv.instance_id === d.instance_id) {
+        } else { this.loadConversations(); }
+        if (this.activeConv && this.activeConv.contact_id === d.contact_id && this.activeConv.instance_id === d.instance_id) {
           this.messages.push(d);
           this.$nextTick(() => this.scrollToBottom());
         }
       };
-
       this.ws.onclose = () => setTimeout(() => this.connectWS(), 3000);
     },
 
@@ -95,34 +79,28 @@ function conversationsPage() {
       try {
         await fetch(`/instances/${this.activeConv.instance_name}/send/text`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${TOKEN}`
-          },
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${TOKEN}` },
           body: JSON.stringify({ number: this.activeConv.phone, message: text })
         });
       } catch(e) {
         this.messageInput = text;
         alert('Erro ao enviar: ' + e.message);
-      } finally {
-        this.sending = false;
-      }
+      } finally { this.sending = false; }
     },
 
     scrollToBottom() {
-      const el = document.getElementById('messages-container');
+      const el = document.getElementById('msg-list');
       if (el) el.scrollTop = el.scrollHeight;
     },
 
-    formatTime(isoStr) {
-      if (!isoStr) return '';
-      return new Date(isoStr).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    formatTime(iso) {
+      if (!iso) return '';
+      return new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     },
 
-    formatDate(isoStr) {
-      if (!isoStr) return '';
-      const d = new Date(isoStr);
-      const today = new Date();
+    formatDate(iso) {
+      if (!iso) return '';
+      const d = new Date(iso), today = new Date();
       if (d.toDateString() === today.toDateString()) return 'hoje';
       return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
     }
@@ -130,97 +108,117 @@ function conversationsPage() {
 }
 </script>
 
-<div x-data="conversationsPage()" x-init="init()"
-  class="flex h-full overflow-hidden">
+<div x-data="conversationsPage()" x-init="init()" class="flex h-full overflow-hidden bg-white">
 
-  <!-- Painel esquerdo: lista de conversas -->
-  <div class="bg-white border-r border-gray-200 flex flex-col flex-shrink-0 w-full sm:w-80"
+  <!-- PAINEL ESQUERDO: lista de conversas -->
+  <div class="flex flex-col bg-white border-r border-gray-200 flex-shrink-0 w-full sm:w-72"
        :class="mobilePanel === 'thread' ? 'hidden sm:flex' : 'flex'">
-    <div class="px-4 py-3 border-b border-gray-100">
-      <h2 class="text-sm font-semibold text-gray-700">Conversas</h2>
+
+    <!-- Header lista -->
+    <div class="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white">
+      <h2 class="text-sm font-semibold text-gray-800">Conversas</h2>
+      <span class="text-xs bg-green-100 text-green-700 px-2.5 py-1 rounded-full font-medium">Abertas</span>
     </div>
 
-    <div class="flex-1 overflow-y-auto">
+    <!-- Lista -->
+    <div class="flex-1 overflow-y-auto divide-y divide-gray-50">
       <template x-if="conversations.length === 0">
-        <div class="flex flex-col items-center justify-center h-full text-gray-400 px-4 text-center">
-          <p class="text-3xl mb-2">💬</p>
-          <p class="text-sm">Nenhuma conversa ainda.</p>
-          <p class="text-xs mt-1">Mensagens recebidas aparecerão aqui.</p>
+        <div class="flex flex-col items-center justify-center h-full text-gray-400 px-6 text-center py-12">
+          <svg class="w-10 h-10 mb-3 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+              d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+          </svg>
+          <p class="text-sm font-medium text-gray-500">Nenhuma conversa</p>
+          <p class="text-xs mt-1">Mensagens recebidas aparecerão aqui</p>
         </div>
       </template>
 
       <template x-for="conv in conversations" :key="conv.contact_id + conv.instance_id">
-        <div @click="selectConv(conv)"
-          class="px-4 py-3 cursor-pointer hover:bg-gray-50 border-b border-gray-50 transition-colors border-l-2"
-          :class="activeConv && activeConv.contact_id === conv.contact_id && activeConv.instance_id === conv.instance_id
-            ? 'bg-blue-50 border-l-blue-500'
-            : 'border-l-transparent'">
-          <div class="flex items-start justify-between gap-2">
-            <div class="flex items-center gap-2 min-w-0">
-              <div class="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0 text-sm font-medium text-gray-600"
-                x-text="(conv.name || conv.phone).charAt(0).toUpperCase()"></div>
-              <div class="min-w-0">
-                <p class="text-sm font-medium text-gray-800 truncate" x-text="conv.name || conv.phone"></p>
-                <p class="text-xs text-gray-400 truncate">
-                  <span x-show="conv.last_direction === 'out'" class="text-blue-400">Você: </span>
-                  <span x-text="conv.last_message"></span>
-                </p>
-              </div>
-            </div>
-            <div class="flex flex-col items-end gap-1 flex-shrink-0">
-              <p class="text-xs text-gray-400 whitespace-nowrap" x-text="formatDate(conv.last_message_at)"></p>
-              <span class="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full whitespace-nowrap" x-text="conv.instance_name"></span>
-            </div>
+        <div @click="selectConv(conv)" class="px-4 py-3 hover:bg-slate-50 cursor-pointer transition-colors"
+          :class="activeConv && activeConv.contact_id === conv.contact_id ? 'bg-blue-50 border-l-2 border-l-blue-500' : 'border-l-2 border-l-transparent'">
+
+          <!-- Nome + hora -->
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-sm font-semibold text-gray-800 truncate mr-2" x-text="conv.name || conv.phone"></span>
+            <span class="text-xs text-gray-400 flex-shrink-0" x-text="formatTime(conv.last_message_at)"></span>
+          </div>
+
+          <!-- Preview + badge -->
+          <div class="flex items-end justify-between gap-2">
+            <p class="text-xs text-gray-500 truncate flex-1">
+              <span x-show="conv.last_direction === 'out'" class="text-blue-500">Você: </span>
+              <span x-text="conv.last_message"></span>
+            </p>
+            <span class="text-[10px] bg-green-50 text-green-600 border border-green-200 px-1.5 py-0.5 rounded-full flex-shrink-0 font-medium">aberta</span>
+          </div>
+
+          <!-- Instância -->
+          <div class="mt-1.5 flex items-center gap-1">
+            <span class="w-1.5 h-1.5 rounded-full bg-slate-300 flex-shrink-0"></span>
+            <span class="text-[10px] text-gray-400" x-text="conv.instance_name"></span>
           </div>
         </div>
       </template>
     </div>
   </div>
 
-  <!-- Painel direito: thread -->
-  <div class="flex-1 flex flex-col bg-gray-50 min-w-0 w-full"
+  <!-- PAINEL DIREITO: thread -->
+  <div class="flex-1 flex flex-col min-w-0 bg-slate-50"
        :class="mobilePanel === 'list' ? 'hidden sm:flex' : 'flex'">
 
-    <!-- Header do chat -->
-    <div class="bg-white border-b border-gray-200 px-4 sm:px-6 py-3 flex items-center gap-3 min-h-[56px]">
-      <!-- Botão voltar (mobile) -->
-      <button @click="goBack()" class="sm:hidden text-gray-500 hover:text-gray-800 mr-1 flex-shrink-0">
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <!-- Header chat -->
+    <div class="bg-white border-b border-gray-200 px-5 py-3 flex items-center gap-3 flex-shrink-0">
+      <!-- Botão voltar mobile -->
+      <button @click="goBack()" class="sm:hidden text-gray-400 hover:text-gray-700 mr-1 flex-shrink-0">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
         </svg>
       </button>
 
       <template x-if="activeConv">
-        <div class="flex items-center gap-3 min-w-0">
-          <div class="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-sm font-medium text-gray-600 flex-shrink-0"
+        <div class="flex items-center gap-3 flex-1 min-w-0">
+          <!-- Avatar -->
+          <div class="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center flex-shrink-0 text-white text-sm font-semibold"
             x-text="(activeConv.name || activeConv.phone).charAt(0).toUpperCase()"></div>
           <div class="min-w-0">
             <p class="text-sm font-semibold text-gray-800 truncate" x-text="activeConv.name || activeConv.phone"></p>
-            <p class="text-xs text-gray-400 truncate">+<span x-text="activeConv.phone"></span> · <span x-text="activeConv.instance_name"></span></p>
+            <p class="text-xs text-gray-400">+<span x-text="activeConv.phone"></span>
+              <span class="mx-1">·</span>
+              <span x-text="activeConv.instance_name"></span>
+            </p>
+          </div>
+          <!-- Badge status -->
+          <div class="ml-auto flex-shrink-0">
+            <span class="text-xs bg-green-50 text-green-600 border border-green-200 px-2.5 py-1 rounded-full font-medium">aberta</span>
           </div>
         </div>
       </template>
+
       <template x-if="!activeConv">
         <p class="text-sm text-gray-400 hidden sm:block">Selecione uma conversa</p>
       </template>
     </div>
 
     <!-- Mensagens -->
-    <div id="messages-container" class="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-2">
+    <div id="msg-list" class="flex-1 overflow-y-auto px-4 sm:px-6 py-5 space-y-3">
       <template x-if="!activeConv">
-        <div class="flex items-center justify-center h-full">
-          <p class="text-sm text-gray-300">Selecione uma conversa para ver as mensagens</p>
+        <div class="flex flex-col items-center justify-center h-full text-gray-300">
+          <svg class="w-16 h-16 mb-3 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1"
+              d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+          </svg>
+          <p class="text-sm">Selecione uma conversa</p>
         </div>
       </template>
 
       <template x-for="msg in messages" :key="msg.id">
         <div class="flex" :class="msg.direction === 'out' ? 'justify-end' : 'justify-start'">
-          <div class="max-w-[80%] sm:max-w-md px-3 py-2 rounded-2xl text-sm shadow-sm"
+          <div class="max-w-[78%] sm:max-w-md px-3.5 py-2.5 rounded-2xl text-sm shadow-sm"
             :class="msg.direction === 'out'
-              ? 'bg-blue-500 text-white rounded-br-sm'
-              : 'bg-white text-gray-800 rounded-bl-sm border border-gray-100'">
-            <p x-text="msg.content" class="break-words whitespace-pre-wrap"></p>
-            <p class="text-xs mt-0.5 text-right"
+              ? 'bg-blue-500 text-white rounded-br-md'
+              : 'bg-white text-gray-800 rounded-bl-md border border-gray-100 shadow-sm'">
+            <p x-text="msg.content" class="break-words whitespace-pre-wrap leading-relaxed"></p>
+            <p class="text-[10px] mt-1 text-right"
               :class="msg.direction === 'out' ? 'text-blue-200' : 'text-gray-400'"
               x-text="formatTime(msg.created_at)"></p>
           </div>
@@ -228,30 +226,31 @@ function conversationsPage() {
       </template>
     </div>
 
-    <!-- Input de mensagem -->
-    <div class="bg-white border-t border-gray-200 px-3 sm:px-4 py-3">
+    <!-- Input -->
+    <div class="bg-white border-t border-gray-200 px-4 py-3 flex-shrink-0">
       <template x-if="activeConv">
-        <div class="flex gap-2">
+        <div class="flex items-center gap-2">
           <input type="text" x-model="messageInput"
             @keydown.enter.prevent="sendMessage()"
             placeholder="Digite sua mensagem..."
             :disabled="sending"
-            class="flex-1 border border-gray-300 rounded-full px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 min-w-0">
+            class="flex-1 bg-gray-50 border border-gray-200 rounded-full px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-colors disabled:opacity-50 min-w-0">
           <button @click="sendMessage()" :disabled="sending || !messageInput.trim()"
-            class="bg-blue-500 text-white rounded-full px-4 sm:px-5 py-2 text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-40 flex-shrink-0">
-            <span class="hidden sm:inline" x-text="sending ? '...' : 'Enviar'"></span>
-            <svg x-show="!sending" class="sm:hidden w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+            class="w-9 h-9 bg-blue-500 hover:bg-blue-600 text-white rounded-full flex items-center justify-center flex-shrink-0 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+            <svg x-show="!sending" class="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
               <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z"/>
             </svg>
-            <span x-show="sending" class="sm:hidden">...</span>
+            <svg x-show="sending" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+            </svg>
           </button>
         </div>
       </template>
       <template x-if="!activeConv">
-        <p class="text-center text-sm text-gray-300 py-1 hidden sm:block">Selecione uma conversa para responder</p>
+        <p class="text-center text-xs text-gray-300 py-1.5 hidden sm:block">Selecione uma conversa para responder</p>
       </template>
     </div>
-
   </div>
 </div>
 {{ end }}

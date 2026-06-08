@@ -10,84 +10,69 @@
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
   <style>
     [x-cloak] { display: none !important; }
-    .nav-active { background-color: rgb(55 65 81); color: white; }
+    .sidebar-link { @apply flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-700/60 transition-colors cursor-pointer; }
+    .sidebar-link.active { @apply text-white bg-slate-700; }
   </style>
 </head>
-<body class="bg-gray-100 h-screen overflow-hidden flex" x-data="{ sidebarOpen: false }">
+<body class="h-screen overflow-hidden flex bg-slate-100" x-data="{ sidebarOpen: false }">
 
   {{ if .Token }}
   <!-- Overlay mobile -->
   <div x-show="sidebarOpen" x-cloak @click="sidebarOpen = false"
-    class="fixed inset-0 bg-black/50 z-40 sm:hidden"></div>
+    class="fixed inset-0 bg-black/60 z-40 sm:hidden"></div>
 
   <!-- Sidebar -->
   <aside
-    class="fixed sm:static inset-y-0 left-0 z-50 flex flex-col bg-gray-900 transition-transform duration-200 ease-in-out sm:translate-x-0 w-56 sm:w-16"
+    class="fixed sm:static inset-y-0 left-0 z-50 flex flex-col bg-slate-900 transition-transform duration-200 sm:translate-x-0 flex-shrink-0"
+    style="width: 220px;"
     :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full sm:translate-x-0'">
 
-    <!-- Brand -->
-    <div class="flex items-center justify-between sm:justify-center h-14 px-4 sm:px-0 border-b border-gray-700 flex-shrink-0">
-      <span class="text-white font-bold text-base sm:text-xs tracking-wide">WAPI</span>
-      <button @click="sidebarOpen = false" class="sm:hidden text-gray-400 hover:text-white p-1">
+    <!-- Brand + fechar -->
+    <div class="flex items-center justify-between px-5 py-4 border-b border-slate-700/60">
+      <span class="text-white font-bold text-lg tracking-tight">WAPI</span>
+      <button @click="sidebarOpen = false" class="sm:hidden text-slate-500 hover:text-white p-0.5 rounded">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
         </svg>
       </button>
     </div>
 
-    <!-- Nav links -->
-    <nav class="flex-1 py-3 space-y-0.5 px-2 sm:px-1">
+    <!-- Nav -->
+    <nav class="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
       <a href="/connections" @click="sidebarOpen = false"
-        class="flex items-center gap-3 sm:flex-col sm:gap-0.5 sm:justify-center px-3 sm:px-1 py-2.5 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors w-full"
-        :class="location.pathname === '/connections' ? 'nav-active' : ''">
-        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-            d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"/>
-        </svg>
-        <span class="text-sm sm:text-[9px] sm:leading-tight text-center">Conexões</span>
+        class="sidebar-link" :class="location.pathname === '/connections' ? 'active' : ''">
+        Conexões
       </a>
-
       <a href="/conversations" @click="sidebarOpen = false"
-        class="flex items-center gap-3 sm:flex-col sm:gap-0.5 sm:justify-center px-3 sm:px-1 py-2.5 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors w-full"
-        :class="location.pathname === '/conversations' ? 'nav-active' : ''">
-        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-            d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
-        </svg>
-        <span class="text-sm sm:text-[9px] sm:leading-tight text-center">Conversas</span>
+        class="sidebar-link" :class="location.pathname === '/conversations' ? 'active' : ''">
+        Conversas
       </a>
     </nav>
 
-    <!-- Logout -->
-    <div class="px-2 sm:px-1 py-3 border-t border-gray-700 flex-shrink-0">
-      <a href="/logout"
-        class="flex items-center gap-3 sm:flex-col sm:gap-0.5 sm:justify-center px-3 sm:px-1 py-2.5 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors w-full">
-        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-            d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
-        </svg>
-        <span class="text-sm sm:text-[9px] sm:leading-tight text-center">Sair</span>
-      </a>
+    <!-- Usuário + Sair -->
+    <div class="px-4 py-4 border-t border-slate-700/60">
+      <p class="text-xs text-slate-500 truncate mb-1">{{ .Username }}</p>
+      <a href="/logout" class="text-xs text-red-400 hover:text-red-300 transition-colors font-medium">Sair</a>
     </div>
   </aside>
   {{ end }}
 
-  <!-- Content -->
+  <!-- Área principal -->
   <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
 
     {{ if .Token }}
     <!-- Topbar mobile -->
-    <header class="sm:hidden flex items-center gap-3 bg-white border-b border-gray-200 px-4 h-14 flex-shrink-0">
-      <button @click="sidebarOpen = true" class="text-gray-600 hover:text-gray-900">
+    <header class="sm:hidden flex items-center gap-3 bg-slate-900 border-b border-slate-700 px-4 h-14 flex-shrink-0">
+      <button @click="sidebarOpen = true" class="text-slate-400 hover:text-white">
         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
         </svg>
       </button>
-      <span class="font-semibold text-gray-800 text-sm">WAPI</span>
+      <span class="font-bold text-white tracking-tight">WAPI</span>
     </header>
     {{ end }}
 
-    <!-- Page content -->
+    <!-- Conteúdo -->
     <main class="flex-1 min-h-0">
       {{ block "content" . }}{{ end }}
     </main>

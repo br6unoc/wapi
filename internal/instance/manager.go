@@ -173,7 +173,12 @@ func (inst *Instance) Connect() error {
 					}
 					if evt.Event == "code" {
 						inst.LastQR = evt.Code
-						inst.BroadcastSSE(`{"event":"qr","data":{"qrcode":"` + evt.Code + `"}}`)
+						log.Printf("[QR] Instance %s got QR code (len=%d)", inst.Name, len(evt.Code))
+						payload, _ := json.Marshal(map[string]interface{}{
+							"event": "qr",
+							"data":  map[string]string{"qrcode": evt.Code},
+						})
+						inst.BroadcastSSE(string(payload))
 					}
 				}
 			}
@@ -189,7 +194,8 @@ func (inst *Instance) Connect() error {
 			inst.Status = "connected"
 			inst.Phone = inst.WAClient.Store.ID.User
 			log.Printf("[CONNECT] Instance %s connected - Phone: %s", inst.Name, inst.Phone)
-			inst.BroadcastSSE(fmt.Sprintf(`{"event":"connected","data":{"phone":"%s"}}`, inst.Phone))
+			p, _ := json.Marshal(map[string]interface{}{"event": "connected", "data": map[string]string{"phone": inst.Phone}})
+			inst.BroadcastSSE(string(p))
 			inst.saveStatusToDB()
 		} else {
 			inst.Status = "disconnected"
@@ -227,7 +233,8 @@ func (inst *Instance) keepAlive() {
 					inst.Status = "connected"
 					inst.Phone = inst.WAClient.Store.ID.User
 					log.Printf("[KEEPALIVE] Instance %s reconnected - Phone: %s", inst.Name, inst.Phone)
-					inst.BroadcastSSE(fmt.Sprintf(`{"event":"connected","data":{"phone":"%s"}}`, inst.Phone))
+					p, _ := json.Marshal(map[string]interface{}{"event": "connected", "data": map[string]string{"phone": inst.Phone}})
+					inst.BroadcastSSE(string(p))
 					inst.saveStatusToDB()
 				}
 			} else {
@@ -235,7 +242,8 @@ func (inst *Instance) keepAlive() {
 					inst.Status = "disconnected"
 					inst.Phone = ""
 					log.Printf("[KEEPALIVE] Instance %s disconnected", inst.Name)
-					inst.BroadcastSSE(`{"event":"disconnected","data":{}}`)
+					p, _ := json.Marshal(map[string]interface{}{"event": "disconnected", "data": map[string]interface{}{}})
+					inst.BroadcastSSE(string(p))
 					inst.saveStatusToDB()
 				}
 			}
@@ -251,7 +259,8 @@ func (inst *Instance) handleEvent(evt interface{}) {
 			inst.Phone = inst.WAClient.Store.ID.User
 		}
 		log.Printf("[EVENT] Instance %s Connected - Phone: %s", inst.Name, inst.Phone)
-		inst.BroadcastSSE(fmt.Sprintf(`{"event":"connected","data":{"phone":"%s","qrcode":""}}`, inst.Phone))
+		p, _ := json.Marshal(map[string]interface{}{"event": "connected", "data": map[string]string{"phone": inst.Phone, "qrcode": ""}})
+		inst.BroadcastSSE(string(p))
 		inst.saveStatusToDB()
 	case *events.Disconnected:
 		inst.Status = "disconnected"

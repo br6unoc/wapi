@@ -1,10 +1,11 @@
 package handler
 
 import (
+	"encoding/json"
+	"log"
 	"net/http"
-        "log"
 	"wapi/internal/instance"
-        "wapi/internal/service"
+	"wapi/internal/service"
 	"wapi/store/postgres"
 
 	"github.com/gin-gonic/gin"
@@ -257,13 +258,14 @@ func SSEHandler(c *gin.Context) {
 	defer inst.RemoveSSEClient(ch)
 
 	if inst.LastQR != "" {
-		c.SSEvent("message", `{"event":"qr","data":{"qrcode":"`+inst.LastQR+`"}}`)
+		p, _ := json.Marshal(map[string]interface{}{"event": "qr", "data": map[string]string{"qrcode": inst.LastQR}})
+		c.SSEvent("message", string(p))
 		c.Writer.Flush()
 	}
-	
-	// Enviar status atual imediatamente ao conectar
+
 	if inst.Status == "connected" && inst.Phone != "" {
-		c.SSEvent("message", `{"event":"connected","data":{"phone":"`+inst.Phone+`","qrcode":""}}`)
+		p, _ := json.Marshal(map[string]interface{}{"event": "connected", "data": map[string]string{"phone": inst.Phone, "qrcode": ""}})
+		c.SSEvent("message", string(p))
 		c.Writer.Flush()
 	}
 

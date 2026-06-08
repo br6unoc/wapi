@@ -69,7 +69,7 @@ function instanceCard(name, initialStatus, initialPhone) {
           this.qrUrl = null;   // limpa QR anterior (mostra spinner)
           QRCode.toDataURL(code, { width: 256, margin: 2 })
             .then(url => { this.qrUrl = url; })
-            .catch(() => {});
+            .catch(err => { console.error('QRCode error:', err, 'code length:', code?.length); });
         } else if (msg.event === 'connected') {
           this.status = 'connected';
           this.phone = msg.data.phone || '';

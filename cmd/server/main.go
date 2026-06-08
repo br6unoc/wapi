@@ -88,7 +88,18 @@ func main() {
 		instances.PATCH("/:name/config", handler.UpdateConfig)
 	}
 
-	r.StaticFile("/", "./web/index.html")
+	// Web UI
+	handler.LoadTemplates()
+	r.GET("/login", handler.WebLogin)
+	r.POST("/login", handler.WebLogin)
+	r.GET("/logout", handler.WebLogout)
+	r.GET("/", func(c *gin.Context) { c.Redirect(http.StatusFound, "/connections") })
+
+	webGroup := r.Group("/", handler.WebAuthMiddleware())
+	{
+		webGroup.GET("/connections", handler.WebConnections)
+	}
+
 	r.Static("/web", "./web")
 
 	srv := &http.Server{

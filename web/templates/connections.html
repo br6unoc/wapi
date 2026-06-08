@@ -65,12 +65,11 @@ function instanceCard(name, initialStatus, initialPhone) {
 
         if (msg.event === 'qr') {
           const code = msg.data.qrcode;
-          QRCode.toDataURL(code, { width: 256, margin: 2, color: { dark: '#000', light: '#fff' } }, (err, url) => {
-            if (!err) {
-              this.qrUrl = url;
-              this.showQR = true;
-            }
-          });
+          this.showQR = true;  // abre modal imediatamente
+          this.qrUrl = null;   // limpa QR anterior (mostra spinner)
+          QRCode.toDataURL(code, { width: 256, margin: 2 })
+            .then(url => { this.qrUrl = url; })
+            .catch(() => {});
         } else if (msg.event === 'connected') {
           this.status = 'connected';
           this.phone = msg.data.phone || '';
@@ -205,8 +204,15 @@ function createInstance() {
           </div>
           <h3 class="font-bold text-gray-900 text-base mb-1">Escanear QR Code</h3>
           <p class="text-xs text-gray-500 mb-4">WhatsApp → Dispositivos vinculados → Vincular dispositivo</p>
-          <div class="bg-gray-50 rounded-xl p-3 mb-4 inline-block">
-            <img :src="qrUrl" class="w-52 h-52 rounded-lg" alt="QR Code">
+          <div class="bg-gray-50 rounded-xl p-3 mb-4 flex items-center justify-center" style="width:232px;height:232px;margin:0 auto">
+            <img x-show="qrUrl" :src="qrUrl" class="w-52 h-52 rounded-lg" alt="QR Code">
+            <div x-show="!qrUrl" class="flex flex-col items-center gap-2 text-gray-400">
+              <svg class="w-8 h-8 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+              </svg>
+              <span class="text-xs">Gerando QR...</span>
+            </div>
           </div>
           <div class="flex items-center gap-2 justify-center mb-4">
             <span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>

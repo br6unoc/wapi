@@ -272,9 +272,10 @@ func SSEHandler(c *gin.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-inst.Ctx():
-			return
-		case msg := <-ch:
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
 			c.SSEvent("message", msg)
 			c.Writer.Flush()
 		}

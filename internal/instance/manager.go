@@ -10,10 +10,10 @@ import (
 	"net/http"
 	"sync"
 	"time"
-	"wapi/internal/hub"
-	"wapi/internal/transcriber"
-	"wapi/internal/whatsapp"
-	"wapi/store/postgres"
+	"botwapp/internal/hub"
+	"botwapp/internal/transcriber"
+	"botwapp/internal/whatsapp"
+	"botwapp/store/postgres"
 
 	"github.com/google/uuid"
 	qrcode "github.com/skip2/go-qrcode"
@@ -430,6 +430,13 @@ func (inst *Instance) saveMessage(phone, pushName, content, msgType, waID, direc
 	if err != nil {
 		log.Printf("[DB] Erro ao salvar mensagem: %v", err)
 		return
+	}
+
+	if direction == "in" {
+		postgres.DB.Exec(
+			`UPDATE contacts SET unread_count = unread_count + 1 WHERE id = $1`,
+			contactID,
+		)
 	}
 
 	payload := map[string]interface{}{

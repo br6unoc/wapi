@@ -3,7 +3,7 @@ package postgres
 import (
 	"database/sql"
 	"fmt"
-	"wapi/config"
+	"botwapp/config"
 
 	_ "github.com/lib/pq"
 )
@@ -84,6 +84,8 @@ func Migrate() error {
 
 	CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages (contact_id, created_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_messages_instance ON messages (instance_id, created_at DESC);
+
+	ALTER TABLE contacts ADD COLUMN IF NOT EXISTS unread_count INTEGER NOT NULL DEFAULT 0;
 	`
 
 	_, err := DB.Exec(query)

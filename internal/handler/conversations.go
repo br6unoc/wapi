@@ -1,10 +1,17 @@
 package handler
 
 import (
+	"encoding/json"
+	"log"
 	"net/http"
-	"wapi/store/postgres"
+	"strings"
+	"botwapp/internal/hub"
+	"botwapp/internal/instance"
+	"botwapp/internal/service"
+	"botwapp/store/postgres"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 func ListConversations(c *gin.Context) {
@@ -13,6 +20,7 @@ func ListConversations(c *gin.Context) {
 			c.id AS contact_id,
 			c.phone,
 			CASE WHEN c.name != '' THEN c.name ELSE c.phone END AS name,
+			c.unread_count,
 			i.id AS instance_id,
 			i.name AS instance_name,
 			m.content AS last_message,
@@ -30,7 +38,7 @@ func ListConversations(c *gin.Context) {
 		) m ON true
 		WHERE m.created_at IS NOT NULL
 		ORDER BY m.created_at DESC
-		LIMIT 50
+		LIMIT 100
 	`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -42,6 +50,7 @@ func ListConversations(c *gin.Context) {
 		ContactID     string `json:"contact_id"`
 		Phone         string `json:"phone"`
 		Name          string `json:"name"`
+		UnreadCount   int    `json:"unread_count"`
 		InstanceID    string `json:"instance_id"`
 		InstanceName  string `json:"instance_name"`
 		LastMessage   string `json:"last_message"`
@@ -54,7 +63,7 @@ func ListConversations(c *gin.Context) {
 	for rows.Next() {
 		var conv Conv
 		if err := rows.Scan(
-			&conv.ContactID, &conv.Phone, &conv.Name,
+			&conv.ContactID, &conv.Phone, &conv.Name, &conv.UnreadCount,
 			&conv.InstanceID, &conv.InstanceName,
 			&conv.LastMessage, &conv.LastDirection, &conv.LastType,
 			&conv.LastMessageAt,
@@ -102,4 +111,93 @@ func GetMessages(c *gin.Context) {
 		msgs = append(msgs, msg)
 	}
 	c.JSON(http.StatusOK, msgs)
+}
+
+// MarkAsRead zera o unread_count do contato quando o atendente abre a conversa.
+func MarkAsRead(c *gin.Context) {
+	instanceName := c.Param("name")
+	phone := c.Param("phone")
+
+	_, err := postgres.DB.Exec(`
+		UPDATE contacts SET unread_count = 0
+		WHERE instance_id = (SELECT id FROM instances WHERE name = $1)
+		AND phone = $2
+	`, instanceName, phone)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// SendFromUI envia mensagem de texto autenticando via JWT (uso interno da UI de conversas).
+func SendFromUI(c *gin.Context) {
+	instanceName := c.Param("name")
+	phone := c.Param("phone")
+
+	inst, ok := instance.Global.GetByName(instanceName)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
+		return
+	}
+
+	var req struct {
+		Message string `json:"message" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "message é obrigatório"})
+		return
+	}
+
+	number := strings.TrimPrefix(phone, "+")
+	number = strings.ReplaceAll(number, " ", "")
+
+	if err := service.SendText(inst, number, req.Message); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	go func(instID, instName, phoneNum, message string) {
+		var contactID string
+		if err := postgres.DB.QueryRow(
+			`INSERT INTO contacts (instance_id, phone, name)
+			 VALUES ($1, $2, $3)
+			 ON CONFLICT (instance_id, phone) DO UPDATE SET name = EXCLUDED.name
+			 RETURNING id`,
+			instID, phoneNum, phoneNum,
+		).Scan(&contactID); err != nil {
+			log.Printf("[DB] Erro ao upsert contact (sendUI): %v", err)
+			return
+		}
+		msgID := uuid.New().String()
+		var createdAt string
+		if err := postgres.DB.QueryRow(
+			`INSERT INTO messages (id, instance_id, contact_id, direction, content, type)
+			 VALUES ($1, $2, $3, 'out', $4, 'text')
+			 RETURNING created_at`,
+			msgID, instID, contactID, message,
+		).Scan(&createdAt); err != nil {
+			log.Printf("[DB] Erro ao salvar msg enviada: %v", err)
+			return
+		}
+		payload := map[string]interface{}{
+			"event": "new_message",
+			"data": map[string]interface{}{
+				"id":            msgID,
+				"instance_id":   instID,
+				"instance_name": instName,
+				"contact_id":    contactID,
+				"phone":         phoneNum,
+				"name":          phoneNum,
+				"direction":     "out",
+				"content":       message,
+				"type":          "text",
+				"created_at":    createdAt,
+			},
+		}
+		jsonBytes, _ := json.Marshal(payload)
+		hub.Global.Broadcast(jsonBytes)
+	}(inst.ID, inst.Name, number, req.Message)
+
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

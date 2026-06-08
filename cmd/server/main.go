@@ -8,11 +8,11 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
-	"wapi/config"
-	"wapi/internal/auth"
-	"wapi/internal/handler"
-	"wapi/internal/instance"
-	"wapi/store/postgres"
+	"botwapp/config"
+	"botwapp/internal/auth"
+	"botwapp/internal/handler"
+	"botwapp/internal/instance"
+	"botwapp/store/postgres"
 	_ "github.com/lib/pq"
 
 	"github.com/gin-gonic/gin"
@@ -94,6 +94,8 @@ func main() {
 	{
 		apiGroup.GET("/conversations", handler.ListConversations)
 		apiGroup.GET("/conversations/:name/:phone/messages", handler.GetMessages)
+		apiGroup.POST("/conversations/:name/:phone/send", handler.SendFromUI)
+		apiGroup.POST("/conversations/:name/:phone/read", handler.MarkAsRead)
 	}
 
 	// Web UI

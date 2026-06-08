@@ -9,10 +9,12 @@ import (
 	"net/http"
 	"sync"
 	"time"
+	"wapi/internal/hub"
 	"wapi/internal/transcriber"
 	"wapi/internal/whatsapp"
 	"wapi/store/postgres"
 
+	"github.com/google/uuid"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
@@ -297,20 +299,34 @@ func (inst *Instance) processMessage(v *events.Message) {
 		"message":       "",
 	}
 
+	content := ""
+	msgTypeStr := "text"
+
 	if v.Message.GetConversation() != "" {
-		msgData["message"] = v.Message.GetConversation()
+		content = v.Message.GetConversation()
+		msgData["message"] = content
 	} else if v.Message.GetExtendedTextMessage() != nil {
-		msgData["message"] = v.Message.GetExtendedTextMessage().GetText()
+		content = v.Message.GetExtendedTextMessage().GetText()
+		msgData["message"] = content
 	} else if v.Message.GetImageMessage() != nil {
-		msgData["message"] = "[imagem]"
+		content = "[imagem]"
 		if v.Message.GetImageMessage().GetCaption() != "" {
-			msgData["message"] = v.Message.GetImageMessage().GetCaption()
+			content = v.Message.GetImageMessage().GetCaption()
 		}
+		msgData["message"] = content
+		msgTypeStr = "image"
 	} else if v.Message.GetAudioMessage() != nil {
 		msgData["message"] = "[áudio]"
 		msgData["type"] = "audio"
 		go inst.processAudio(v, msgData)
+		if !isGroup {
+			go inst.saveMessage(senderNumber, v.Info.PushName, "[áudio]", "audio", v.Info.ID, "in")
+		}
 		return
+	}
+
+	if !isGroup {
+		go inst.saveMessage(senderNumber, v.Info.PushName, content, msgTypeStr, v.Info.ID, "in")
 	}
 
 	inst.broadcastMessage(msgData)
@@ -374,6 +390,53 @@ func (inst *Instance) RemoveSSEClient(ch chan string) {
 	inst.sseMu.Lock()
 	defer inst.sseMu.Unlock()
 	delete(inst.SSEClients, ch)
+}
+
+// saveMessage persiste a mensagem no banco e faz broadcast via WebSocket.
+func (inst *Instance) saveMessage(phone, pushName, content, msgType, waID, direction string) {
+	var contactID string
+	err := postgres.DB.QueryRow(
+		`INSERT INTO contacts (instance_id, phone, name)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (instance_id, phone) DO UPDATE SET name = EXCLUDED.name
+		 RETURNING id`,
+		inst.ID, phone, pushName,
+	).Scan(&contactID)
+	if err != nil {
+		log.Printf("[DB] Erro ao upsert contact: %v", err)
+		return
+	}
+
+	msgID := uuid.New().String()
+	var createdAt string
+	err = postgres.DB.QueryRow(
+		`INSERT INTO messages (id, instance_id, contact_id, direction, content, type, wa_message_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 RETURNING created_at`,
+		msgID, inst.ID, contactID, direction, content, msgType, waID,
+	).Scan(&createdAt)
+	if err != nil {
+		log.Printf("[DB] Erro ao salvar mensagem: %v", err)
+		return
+	}
+
+	payload := map[string]interface{}{
+		"event": "new_message",
+		"data": map[string]interface{}{
+			"id":            msgID,
+			"instance_id":   inst.ID,
+			"instance_name": inst.Name,
+			"contact_id":    contactID,
+			"phone":         phone,
+			"name":          pushName,
+			"direction":     direction,
+			"content":       content,
+			"type":          msgType,
+			"created_at":    createdAt,
+		},
+	}
+	jsonBytes, _ := json.Marshal(payload)
+	hub.Global.Broadcast(jsonBytes)
 }
 
 func (inst *Instance) Ctx() <-chan struct{} {

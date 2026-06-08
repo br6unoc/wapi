@@ -8,13 +8,9 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
-  <style>
-    [x-cloak] { display: none !important; }
-    .sidebar-link { @apply flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-700/60 transition-colors cursor-pointer; }
-    .sidebar-link.active { @apply text-white bg-slate-700; }
-  </style>
+  <style>[x-cloak]{display:none!important}</style>
 </head>
-<body class="h-screen overflow-hidden flex bg-slate-100" x-data="{ sidebarOpen: false }">
+<body class="h-screen overflow-hidden flex bg-gray-100" x-data="{ sidebarOpen: false }">
 
   {{ if .Token }}
   <!-- Overlay mobile -->
@@ -22,15 +18,22 @@
     class="fixed inset-0 bg-black/60 z-40 sm:hidden"></div>
 
   <!-- Sidebar -->
-  <aside
-    class="fixed sm:static inset-y-0 left-0 z-50 flex flex-col bg-slate-900 transition-transform duration-200 sm:translate-x-0 flex-shrink-0"
-    style="width: 220px;"
+  <aside class="fixed sm:static inset-y-0 left-0 z-50 flex flex-col transition-transform duration-200 sm:translate-x-0 flex-shrink-0"
+    style="width:220px; background:#1a1f2e;"
     :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full sm:translate-x-0'">
 
-    <!-- Brand + fechar -->
-    <div class="flex items-center justify-between px-5 py-4 border-b border-slate-700/60">
-      <span class="text-white font-bold text-lg tracking-tight">WAPI</span>
-      <button @click="sidebarOpen = false" class="sm:hidden text-slate-500 hover:text-white p-0.5 rounded">
+    <!-- Brand -->
+    <div class="flex items-center justify-between px-5 py-5" style="border-bottom:1px solid rgba(255,255,255,0.07)">
+      <div class="flex items-center gap-2.5">
+        <div class="w-7 h-7 rounded-lg flex items-center justify-center" style="background:#4f6ef7">
+          <svg class="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
+            <path d="M12 0C5.373 0 0 5.373 0 12c0 2.123.554 4.112 1.527 5.847L0 24l6.335-1.512A11.95 11.95 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.818 9.818 0 01-5.007-1.37l-.36-.214-3.73.892.933-3.613-.235-.372A9.818 9.818 0 012.182 12C2.182 6.58 6.58 2.182 12 2.182S21.818 6.58 21.818 12 17.42 21.818 12 21.818z"/>
+          </svg>
+        </div>
+        <span class="text-white font-bold text-base tracking-tight">WAPI</span>
+      </div>
+      <button @click="sidebarOpen = false" class="sm:hidden text-white/40 hover:text-white p-1 rounded">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
         </svg>
@@ -38,21 +41,51 @@
     </div>
 
     <!-- Nav -->
-    <nav class="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+    <nav class="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
       <a href="/connections" @click="sidebarOpen = false"
-        class="sidebar-link" :class="location.pathname === '/connections' ? 'active' : ''">
+        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 group"
+        :style="location.pathname === '/connections'
+          ? 'background:#4f6ef7; color:#fff;'
+          : 'color:rgba(255,255,255,0.55);'">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+          :style="location.pathname === '/connections' ? 'opacity:1' : 'opacity:0.7'">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"/>
+        </svg>
         Conexões
       </a>
+
       <a href="/conversations" @click="sidebarOpen = false"
-        class="sidebar-link" :class="location.pathname === '/conversations' ? 'active' : ''">
+        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150"
+        :style="location.pathname === '/conversations'
+          ? 'background:#4f6ef7; color:#fff;'
+          : 'color:rgba(255,255,255,0.55);'">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+          :style="location.pathname === '/conversations' ? 'opacity:1' : 'opacity:0.7'">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+        </svg>
         Conversas
       </a>
     </nav>
 
-    <!-- Usuário + Sair -->
-    <div class="px-4 py-4 border-t border-slate-700/60">
-      <p class="text-xs text-slate-500 truncate mb-1">{{ .Username }}</p>
-      <a href="/logout" class="text-xs text-red-400 hover:text-red-300 transition-colors font-medium">Sair</a>
+    <!-- Usuário -->
+    <div class="px-4 py-4" style="border-top:1px solid rgba(255,255,255,0.07)">
+      <div class="flex items-center gap-2.5 mb-3">
+        <div class="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 text-white text-xs font-bold"
+          style="background:#4f6ef7">
+          {{ printf "%.1s" .Username }}
+        </div>
+        <p class="text-xs font-medium truncate" style="color:rgba(255,255,255,0.6)">{{ .Username }}</p>
+      </div>
+      <a href="/logout" class="flex items-center gap-2 text-xs font-medium transition-colors"
+        style="color:#f87171;" onmouseover="this.style.color='#fca5a5'" onmouseout="this.style.color='#f87171'">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+        </svg>
+        Sair
+      </a>
     </div>
   </aside>
   {{ end }}
@@ -62,17 +95,21 @@
 
     {{ if .Token }}
     <!-- Topbar mobile -->
-    <header class="sm:hidden flex items-center gap-3 bg-slate-900 border-b border-slate-700 px-4 h-14 flex-shrink-0">
-      <button @click="sidebarOpen = true" class="text-slate-400 hover:text-white">
+    <header class="sm:hidden flex items-center gap-3 px-4 h-14 flex-shrink-0" style="background:#1a1f2e;">
+      <button @click="sidebarOpen = true" class="text-white/60 hover:text-white">
         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
         </svg>
       </button>
-      <span class="font-bold text-white tracking-tight">WAPI</span>
+      <div class="flex items-center gap-2">
+        <div class="w-6 h-6 rounded-md flex items-center justify-center" style="background:#4f6ef7">
+          <span class="text-white text-xs font-bold">W</span>
+        </div>
+        <span class="font-bold text-white text-sm">WAPI</span>
+      </div>
     </header>
     {{ end }}
 
-    <!-- Conteúdo -->
     <main class="flex-1 min-h-0">
       {{ block "content" . }}{{ end }}
     </main>

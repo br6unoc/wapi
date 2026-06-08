@@ -65,11 +65,8 @@ function instanceCard(name, initialStatus, initialPhone) {
 
         if (msg.event === 'qr') {
           const code = msg.data.qrcode;
-          this.showQR = true;  // abre modal imediatamente
-          this.qrUrl = null;   // limpa QR anterior (mostra spinner)
-          QRCode.toDataURL(code, { width: 256, margin: 2 })
-            .then(url => { this.qrUrl = url; })
-            .catch(err => { console.error('QRCode error:', err, 'code length:', code?.length); });
+          this.showQR = true;
+          this.qrUrl = code; // já é um data URL gerado no servidor
         } else if (msg.event === 'connected') {
           this.status = 'connected';
           this.phone = msg.data.phone || '';

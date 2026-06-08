@@ -258,7 +258,8 @@ func SSEHandler(c *gin.Context) {
 	defer inst.RemoveSSEClient(ch)
 
 	if inst.LastQR != "" {
-		p, _ := json.Marshal(map[string]interface{}{"event": "qr", "data": map[string]string{"qrcode": inst.LastQR}})
+		dataURL := instance.QRToDataURL(inst.LastQR)
+		p, _ := json.Marshal(map[string]interface{}{"event": "qr", "data": map[string]string{"qrcode": dataURL}})
 		c.SSEvent("message", string(p))
 		c.Writer.Flush()
 	}

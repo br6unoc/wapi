@@ -3,6 +3,7 @@ package instance
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -15,6 +16,7 @@ import (
 	"wapi/store/postgres"
 
 	"github.com/google/uuid"
+	qrcode "github.com/skip2/go-qrcode"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
@@ -174,9 +176,10 @@ func (inst *Instance) Connect() error {
 					if evt.Event == "code" {
 						inst.LastQR = evt.Code
 						log.Printf("[QR] Instance %s got QR code (len=%d)", inst.Name, len(evt.Code))
+						dataURL := QRToDataURL(evt.Code)
 						payload, _ := json.Marshal(map[string]interface{}{
 							"event": "qr",
-							"data":  map[string]string{"qrcode": evt.Code},
+							"data":  map[string]string{"qrcode": dataURL},
 						})
 						inst.BroadcastSSE(string(payload))
 					}
@@ -450,4 +453,13 @@ func (inst *Instance) saveMessage(phone, pushName, content, msgType, waID, direc
 
 func (inst *Instance) Ctx() <-chan struct{} {
 	return inst.ctx.Done()
+}
+
+func QRToDataURL(content string) string {
+	png, err := qrcode.Encode(content, qrcode.Low, 256)
+	if err != nil {
+		log.Printf("[QR] Erro ao gerar QR PNG: %v", err)
+		return ""
+	}
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
 }

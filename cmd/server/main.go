@@ -106,6 +106,7 @@ func main() {
 	webGroup := r.Group("/", handler.WebAuthMiddleware())
 	{
 		webGroup.GET("/connections", handler.WebConnections)
+		webGroup.GET("/conversations", handler.WebConversations)
 	}
 
 	r.Static("/web", "./web")

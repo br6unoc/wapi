@@ -67,6 +67,13 @@ func WebLogout(c *gin.Context) {
 	c.Redirect(http.StatusFound, "/login")
 }
 
+func WebConversations(c *gin.Context) {
+	token, _ := c.Get("token")
+	render(c, http.StatusOK, "conversations.html", gin.H{
+		"Token": token,
+	})
+}
+
 func WebConnections(c *gin.Context) {
 	token, _ := c.Get("token")
 

@@ -1,0 +1,238 @@
+{{ template "layout.html" . }}
+{{ define "title" }}Conversas — WAPI{{ end }}
+{{ define "content" }}
+
+<script>
+const TOKEN = document.querySelector('meta[name="auth-token"]')?.content || '';
+
+function conversationsPage() {
+  return {
+    conversations: [],
+    activeConv: null,
+    messages: [],
+    messageInput: '',
+    sending: false,
+    ws: null,
+
+    init() {
+      this.loadConversations();
+      this.connectWS();
+    },
+
+    async loadConversations() {
+      try {
+        const resp = await fetch('/api/conversations', {
+          headers: { 'Authorization': `Bearer ${TOKEN}` }
+        });
+        this.conversations = await resp.json();
+      } catch(e) {
+        console.error('Erro ao carregar conversas:', e);
+      }
+    },
+
+    async selectConv(conv) {
+      this.activeConv = conv;
+      this.messages = [];
+      try {
+        const resp = await fetch(`/api/conversations/${conv.instance_name}/${conv.phone}/messages`, {
+          headers: { 'Authorization': `Bearer ${TOKEN}` }
+        });
+        this.messages = await resp.json();
+        this.$nextTick(() => this.scrollToBottom());
+      } catch(e) {
+        console.error('Erro ao carregar mensagens:', e);
+      }
+    },
+
+    connectWS() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      this.ws = new WebSocket(`${proto}//${location.host}/ws?token=${TOKEN}`);
+
+      this.ws.onmessage = (e) => {
+        let msg;
+        try { msg = JSON.parse(e.data); } catch { return; }
+        if (msg.event !== 'new_message') return;
+
+        const d = msg.data;
+
+        // Atualizar lista de conversas
+        const idx = this.conversations.findIndex(
+          c => c.contact_id === d.contact_id && c.instance_id === d.instance_id
+        );
+        if (idx > -1) {
+          const conv = this.conversations.splice(idx, 1)[0];
+          conv.last_message = d.content;
+          conv.last_direction = d.direction;
+          conv.last_message_at = d.created_at;
+          this.conversations.unshift(conv);
+        } else {
+          this.loadConversations();
+        }
+
+        // Se conversa ativa, adicionar mensagem no thread
+        if (this.activeConv &&
+            this.activeConv.contact_id === d.contact_id &&
+            this.activeConv.instance_id === d.instance_id) {
+          this.messages.push(d);
+          this.$nextTick(() => this.scrollToBottom());
+        }
+      };
+
+      this.ws.onclose = () => setTimeout(() => this.connectWS(), 3000);
+    },
+
+    async sendMessage() {
+      if (!this.messageInput.trim() || !this.activeConv || this.sending) return;
+      const text = this.messageInput.trim();
+      this.messageInput = '';
+      this.sending = true;
+      try {
+        await fetch(`/instances/${this.activeConv.instance_name}/send/text`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${TOKEN}`
+          },
+          body: JSON.stringify({ number: this.activeConv.phone, message: text })
+        });
+      } catch(e) {
+        this.messageInput = text;
+        alert('Erro ao enviar: ' + e.message);
+      } finally {
+        this.sending = false;
+      }
+    },
+
+    scrollToBottom() {
+      const el = document.getElementById('messages-container');
+      if (el) el.scrollTop = el.scrollHeight;
+    },
+
+    formatTime(isoStr) {
+      if (!isoStr) return '';
+      return new Date(isoStr).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    },
+
+    formatDate(isoStr) {
+      if (!isoStr) return '';
+      const d = new Date(isoStr);
+      const today = new Date();
+      if (d.toDateString() === today.toDateString()) return 'hoje';
+      return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+    }
+  }
+}
+</script>
+
+<div x-data="conversationsPage()" x-init="init()"
+  class="flex gap-0 -mx-6 -my-8 h-[calc(100vh-73px)]">
+
+  <!-- Painel esquerdo: lista de conversas -->
+  <div class="w-80 flex-shrink-0 bg-white border-r border-gray-200 flex flex-col">
+    <div class="px-4 py-3 border-b border-gray-100">
+      <h2 class="text-sm font-semibold text-gray-700">Conversas</h2>
+    </div>
+
+    <div class="flex-1 overflow-y-auto">
+      <template x-if="conversations.length === 0">
+        <div class="flex flex-col items-center justify-center h-full text-gray-400 px-4 text-center">
+          <p class="text-3xl mb-2">💬</p>
+          <p class="text-sm">Nenhuma conversa ainda.</p>
+          <p class="text-xs mt-1">Mensagens recebidas aparecerão aqui.</p>
+        </div>
+      </template>
+
+      <template x-for="conv in conversations" :key="conv.contact_id + conv.instance_id">
+        <div @click="selectConv(conv)"
+          class="px-4 py-3 cursor-pointer hover:bg-gray-50 border-b border-gray-50 transition-colors"
+          :class="activeConv && activeConv.contact_id === conv.contact_id && activeConv.instance_id === conv.instance_id
+            ? 'bg-blue-50 border-l-2 border-l-blue-500'
+            : 'border-l-2 border-l-transparent'">
+          <div class="flex items-start justify-between gap-2">
+            <div class="flex items-center gap-2 min-w-0">
+              <div class="w-9 h-9 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0 text-sm font-medium text-gray-600"
+                x-text="(conv.name || conv.phone).charAt(0).toUpperCase()"></div>
+              <div class="min-w-0">
+                <p class="text-sm font-medium text-gray-800 truncate" x-text="conv.name || conv.phone"></p>
+                <p class="text-xs text-gray-400 truncate">
+                  <span x-show="conv.last_direction === 'out'" class="text-blue-400">Você: </span>
+                  <span x-text="conv.last_message"></span>
+                </p>
+              </div>
+            </div>
+            <div class="flex flex-col items-end gap-1 flex-shrink-0 text-right">
+              <p class="text-xs text-gray-400" x-text="formatDate(conv.last_message_at)"></p>
+              <span class="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full" x-text="conv.instance_name"></span>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- Painel direito: thread -->
+  <div class="flex-1 flex flex-col bg-gray-50 min-w-0">
+
+    <!-- Header -->
+    <div class="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-3 h-14">
+      <template x-if="activeConv">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-sm font-medium text-gray-600"
+            x-text="(activeConv.name || activeConv.phone).charAt(0).toUpperCase()"></div>
+          <div>
+            <p class="text-sm font-semibold text-gray-800" x-text="activeConv.name || activeConv.phone"></p>
+            <p class="text-xs text-gray-400">+<span x-text="activeConv.phone"></span> · <span x-text="activeConv.instance_name"></span></p>
+          </div>
+        </div>
+      </template>
+      <template x-if="!activeConv">
+        <p class="text-sm text-gray-400">Selecione uma conversa</p>
+      </template>
+    </div>
+
+    <!-- Mensagens -->
+    <div id="messages-container" class="flex-1 overflow-y-auto px-6 py-4 space-y-2">
+      <template x-if="!activeConv">
+        <div class="flex items-center justify-center h-full">
+          <p class="text-sm text-gray-300">Selecione uma conversa para ver as mensagens</p>
+        </div>
+      </template>
+
+      <template x-for="msg in messages" :key="msg.id">
+        <div class="flex" :class="msg.direction === 'out' ? 'justify-end' : 'justify-start'">
+          <div class="max-w-xs lg:max-w-md px-3 py-2 rounded-2xl text-sm shadow-sm"
+            :class="msg.direction === 'out'
+              ? 'bg-blue-500 text-white rounded-br-sm'
+              : 'bg-white text-gray-800 rounded-bl-sm border border-gray-100'">
+            <p x-text="msg.content" class="break-words whitespace-pre-wrap"></p>
+            <p class="text-xs mt-0.5 text-right"
+              :class="msg.direction === 'out' ? 'text-blue-200' : 'text-gray-400'"
+              x-text="formatTime(msg.created_at)"></p>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Input -->
+    <div class="bg-white border-t border-gray-200 px-4 py-3">
+      <template x-if="activeConv">
+        <div class="flex gap-2">
+          <input type="text" x-model="messageInput"
+            @keydown.enter.prevent="sendMessage()"
+            placeholder="Digite sua mensagem..."
+            :disabled="sending"
+            class="flex-1 border border-gray-300 rounded-full px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50">
+          <button @click="sendMessage()" :disabled="sending || !messageInput.trim()"
+            class="bg-blue-500 text-white rounded-full px-5 py-2 text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-40 flex-shrink-0">
+            <span x-text="sending ? '...' : 'Enviar'"></span>
+          </button>
+        </div>
+      </template>
+      <template x-if="!activeConv">
+        <p class="text-center text-sm text-gray-300 py-1">Selecione uma conversa para responder</p>
+      </template>
+    </div>
+
+  </div>
+</div>
+{{ end }}

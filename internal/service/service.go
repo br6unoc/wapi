@@ -1,7 +1,9 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
         "log"
 	"fmt"
 	"math/rand"
@@ -307,8 +309,8 @@ func generateWaveform(data []byte) []byte {
 }
 
 // ConvertToOpus converte qualquer áudio para OGG/Opus (formato aceito pelo WhatsApp iOS e Android).
-// Usa conversão em dois passos (entrada → PCM WAV → OGG/Opus) para garantir granule positions
-// corretas conforme RFC 7845, evitando rejeição pelo WhatsApp quando o input é MP4/AAC (iOS).
+// Após a conversão, corrige as granule positions do OGG conforme RFC 7845 (adiciona pre_skip),
+// necessário para reprodução no WhatsApp quando o input é MP4/AAC (iOS MediaRecorder).
 func ConvertToOpus(data []byte) ([]byte, error) {
 	tmpIn, err := os.CreateTemp("", "audio-in-*")
 	if err != nil {
@@ -320,25 +322,6 @@ func ConvertToOpus(data []byte) ([]byte, error) {
 	}
 	tmpIn.Close()
 
-	// Passo 1: converter para PCM WAV (normaliza qualquer formato de entrada)
-	tmpWAV, err := os.CreateTemp("", "audio-mid-*.wav")
-	if err != nil {
-		return nil, err
-	}
-	defer os.Remove(tmpWAV.Name())
-	tmpWAV.Close()
-
-	if out, err := exec.Command("ffmpeg", "-y",
-		"-i", tmpIn.Name(),
-		"-ar", "48000",
-		"-ac", "1",
-		"-f", "wav",
-		tmpWAV.Name(),
-	).CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("ffmpeg step1: %w — %s", err, string(out))
-	}
-
-	// Passo 2: WAV → OGG/Opus (garante granule positions corretas)
 	tmpOut, err := os.CreateTemp("", "audio-out-*.ogg")
 	if err != nil {
 		return nil, err
@@ -346,24 +329,107 @@ func ConvertToOpus(data []byte) ([]byte, error) {
 	defer os.Remove(tmpOut.Name())
 	tmpOut.Close()
 
-	if out, err := exec.Command("ffmpeg", "-y",
-		"-i", tmpWAV.Name(),
+	cmd := exec.Command("ffmpeg", "-y",
+		"-i", tmpIn.Name(),
 		"-c:a", "libopus",
 		"-b:a", "64k",
 		"-ar", "48000",
 		"-ac", "1",
 		"-f", "ogg",
 		tmpOut.Name(),
-	).CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("ffmpeg step2: %w — %s", err, string(out))
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("ffmpeg: %w — %s", err, string(out))
 	}
 
 	converted, err := os.ReadFile(tmpOut.Name())
 	if err != nil {
 		return nil, err
 	}
+
+	// Corrige granule positions: ffmpeg omite pre_skip ao converter de MP4/AAC,
+	// gerando OGG inválido conforme RFC 7845 que o WhatsApp rejeita.
+	converted = fixOggOpusGranules(converted)
+
 	log.Printf("[AUDIO] Converted to OGG/Opus: %d → %d bytes", len(data), len(converted))
 	return converted, nil
+}
+
+// fixOggOpusGranules adiciona o valor de pre_skip (do OpusHead) a todas as granule
+// positions de páginas de áudio no arquivo OGG, conformando com RFC 7845 Section 4.
+func fixOggOpusGranules(data []byte) []byte {
+	// Lê pre_skip do OpusHead
+	headIdx := bytes.Index(data, []byte("OpusHead"))
+	if headIdx < 0 || headIdx+12 > len(data) {
+		return data
+	}
+	preSkip := uint64(binary.LittleEndian.Uint16(data[headIdx+10:]))
+	if preSkip == 0 {
+		return data
+	}
+
+	result := make([]byte, len(data))
+	copy(result, data)
+
+	i := 0
+	for i < len(result)-27 {
+		if result[i] != 'O' || result[i+1] != 'g' || result[i+2] != 'g' || result[i+3] != 'S' {
+			i++
+			continue
+		}
+		headerType := result[i+5]
+		granule := int64(binary.LittleEndian.Uint64(result[i+6:]))
+		numSegs := int(result[i+26])
+		if i+27+numSegs > len(result) {
+			break
+		}
+		payloadSize := 0
+		for _, s := range result[i+27 : i+27+numSegs] {
+			payloadSize += int(s)
+		}
+		pageEnd := i + 27 + numSegs + payloadSize
+
+		// Pula páginas BOS (beginning of stream)
+		if headerType&0x02 != 0 {
+			i = pageEnd
+			continue
+		}
+
+		// Pula páginas de header (OpusHead, OpusTags)
+		isHeader := false
+		if payloadSize >= 8 {
+			start := result[i+27+numSegs : i+27+numSegs+8]
+			isHeader = bytes.HasPrefix(start, []byte("OpusHead")) || bytes.HasPrefix(start, []byte("OpusTags"))
+		}
+
+		if !isHeader && granule > 0 {
+			binary.LittleEndian.PutUint64(result[i+6:], uint64(granule+int64(preSkip)))
+			// Zera checksum e recalcula
+			result[i+22] = 0; result[i+23] = 0; result[i+24] = 0; result[i+25] = 0
+			crc := oggCRC32(result[i:pageEnd])
+			binary.LittleEndian.PutUint32(result[i+22:], crc)
+		}
+
+		i = pageEnd
+	}
+	return result
+}
+
+// oggCRC32 calcula o checksum CRC32 para páginas OGG (polinômio 0x04C11DB7).
+func oggCRC32(data []byte) uint32 {
+	const poly = uint32(0x04c11db7)
+	crc := uint32(0)
+	for _, b := range data {
+		crc ^= uint32(b) << 24
+		for j := 0; j < 8; j++ {
+			if crc&0x80000000 != 0 {
+				crc = (crc << 1) ^ poly
+			} else {
+				crc <<= 1
+			}
+		}
+	}
+	return crc
 }
 
 func compressVideo(data []byte) ([]byte, string, error) {

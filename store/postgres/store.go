@@ -132,22 +132,17 @@ func Migrate() error {
 
 	DB.Exec(`ALTER TABLE companies ADD COLUMN IF NOT EXISTS plan_value DECIMAL(10,2) NOT NULL DEFAULT 0`)
 
-	DB.Exec(`
-		CREATE TABLE IF NOT EXISTS agents (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-			company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-			instance_id UUID NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
-			name VARCHAR(255) NOT NULL,
-			prompt TEXT NOT NULL,
-			contact_type VARCHAR(20) NOT NULL CHECK (contact_type IN ('first_contact', 'returning')),
-			is_active BOOLEAN NOT NULL DEFAULT TRUE,
-			handoff_keyword VARCHAR(100) NOT NULL DEFAULT 'PRECISO_DE_HUMANO',
-			created_at TIMESTAMP DEFAULT NOW(),
-			UNIQUE (instance_id, contact_type)
-		)
-	`)
-	DB.Exec(`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS agent_mode BOOLEAN NOT NULL DEFAULT TRUE`)
-	DB.Exec(`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS is_first_contact BOOLEAN NOT NULL DEFAULT TRUE`)
+	if _, err := DB.Exec(`CREATE TABLE IF NOT EXISTS agents (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE, instance_id UUID NOT NULL REFERENCES instances(id) ON DELETE CASCADE, name VARCHAR(255) NOT NULL, prompt TEXT NOT NULL, contact_type VARCHAR(20) NOT NULL CHECK (contact_type IN ('first_contact', 'returning')), is_active BOOLEAN NOT NULL DEFAULT TRUE, handoff_keyword VARCHAR(100) NOT NULL DEFAULT 'PRECISO_DE_HUMANO', created_at TIMESTAMP DEFAULT NOW(), UNIQUE (instance_id, contact_type))`); err != nil {
+		log.Printf("[MIGRATE] Aviso na criação da tabela agents: %v", err)
+	}
+
+	if _, err := DB.Exec(`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS agent_mode BOOLEAN NOT NULL DEFAULT TRUE`); err != nil {
+		log.Printf("[MIGRATE] Aviso ao adicionar agent_mode: %v", err)
+	}
+
+	if _, err := DB.Exec(`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS is_first_contact BOOLEAN NOT NULL DEFAULT TRUE`); err != nil {
+		log.Printf("[MIGRATE] Aviso ao adicionar is_first_contact: %v", err)
+	}
 
 	// Setores e atribuições de usuários
 	DB.Exec(`

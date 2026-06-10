@@ -98,7 +98,17 @@ func main() {
 		apiGroup.POST("/conversations/:name/:phone/send-media", handler.SendMediaFromUI)
 		apiGroup.POST("/conversations/:name/:phone/read", handler.MarkAsRead)
 		apiGroup.POST("/messages/:id/transcribe", handler.TranscribeMessage)
+		// TODO: descomentar quando handler.TakeoverConversation e handler.ResumeAgent forem implementados
+		// apiGroup.POST("/conversations/:name/:phone/takeover", handler.TakeoverConversation)
+		// apiGroup.POST("/conversations/:name/:phone/resume", handler.ResumeAgent)
 	}
+
+	// Agentes (admin only)
+	agentsAPI := r.Group("/api/agents", handler.AuthMiddleware(), handler.AdminOrAbove())
+	agentsAPI.GET("", handler.ListAgents)
+	agentsAPI.POST("", handler.CreateAgent)
+	agentsAPI.PATCH("/:id", handler.UpdateAgent)
+	agentsAPI.DELETE("/:id", handler.DeleteAgent)
 
 	r.Static("/media", "/app/media")
 
@@ -115,6 +125,7 @@ func main() {
 		webGroup.GET("/conversations", handler.WebConversations)
 		webGroup.GET("/settings", handler.WebSettings)
 		webGroup.POST("/settings", handler.WebSettingsSave)
+		webGroup.GET("/agents", handler.WebAgents)
 	}
 
 	r.Static("/web", "./web")

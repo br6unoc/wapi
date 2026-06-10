@@ -384,7 +384,6 @@ func SendFromUI(c *gin.Context) {
 		},
 	}
 	jsonBytes, _ := json.Marshal(payload)
-	log.Printf("[WS] broadcast new_message out → %d clientes", hub.Global.Count())
 	hub.Global.Broadcast(jsonBytes)
 
 	// Retorna imediatamente — sem travar o frontend

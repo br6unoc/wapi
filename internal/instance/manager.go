@@ -639,7 +639,6 @@ func (inst *Instance) saveMessage(phone, pushName, content, msgType, waID, direc
 		},
 	}
 	jsonBytes, _ := json.Marshal(payload)
-	log.Printf("[WS] broadcast new_message in → %d clientes", hub.Global.Count())
 	hub.Global.Broadcast(jsonBytes)
 }
 

@@ -3,8 +3,9 @@ package handler
 import (
 	"net/http"
 	"strings"
-	"wapi/internal/auth"
-	"wapi/internal/instance"
+	"botwapp/internal/auth"
+	"botwapp/internal/instance"
+	"botwapp/store/postgres"
 
 	"github.com/gin-gonic/gin"
 )
@@ -32,10 +33,45 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		var role, companyID string
+		postgres.DB.QueryRow(`SELECT COALESCE(role,'admin'), COALESCE(company_id::text,'') FROM users WHERE id = $1`, claims.UserID).Scan(&role, &companyID)
+
 		c.Set("user_id", claims.UserID)
 		c.Set("username", claims.Username)
+		c.Set("role", role)
+		c.Set("company_id", companyID)
 		c.Next()
 	}
+}
+
+func AdminOrAbove() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		role, _ := c.Get("role")
+		if role != "admin" && role != "super_admin" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "acesso negado"})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+func currentCompanyID(c *gin.Context) string {
+	v, _ := c.Get("company_id")
+	s, _ := v.(string)
+	return s
+}
+
+func currentRole(c *gin.Context) string {
+	v, _ := c.Get("role")
+	s, _ := v.(string)
+	return s
+}
+
+func currentUserID(c *gin.Context) string {
+	v, _ := c.Get("user_id")
+	s, _ := v.(string)
+	return s
 }
 
 func APIKeyMiddleware() gin.HandlerFunc {

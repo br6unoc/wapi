@@ -3,57 +3,44 @@ package handler
 import (
 	"log"
 	"net/http"
-	"time"
 	"botwapp/internal/auth"
 	"botwapp/internal/hub"
 
-	"github.com/gorilla/websocket"
+	"github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 )
-
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin:     func(r *http.Request) bool { return true },
-}
 
 func WSHandler(c *gin.Context) {
 	token := c.Query("token")
 	if token == "" {
-		c.String(401, "token obrigatório")
+		c.String(http.StatusUnauthorized, "token obrigatório")
 		return
 	}
 	if _, err := auth.ValidateToken(token); err != nil {
-		c.String(401, "token inválido")
+		c.String(http.StatusUnauthorized, "token inválido")
 		return
 	}
 
-	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	conn, err := websocket.Accept(c.Writer, c.Request, &websocket.AcceptOptions{
+		InsecureSkipVerify: true,
+	})
 	if err != nil {
-		log.Printf("[WS] Upgrade error: %v", err)
+		log.Printf("[WS] Accept error: %v", err)
 		return
 	}
 
 	cl := hub.Global.Register(conn)
 	defer func() {
 		hub.Global.Unregister(cl)
-		log.Printf("[WS] cliente desconectado, restam=%d", hub.Global.Count())
+		log.Printf("[WS] cliente desconectado")
 	}()
 
-	log.Printf("[WS] cliente conectado, total=%d", hub.Global.Count())
+	log.Printf("[WS] cliente conectado")
 
-	// writePump em goroutine separada
-	go cl.WritePump()
-
-	// readPump: mantém conexão aberta e detecta desconexão
-	conn.SetReadLimit(512)
-	conn.SetReadDeadline(time.Now().Add(120 * time.Second))
-	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(120 * time.Second))
-		return nil
-	})
+	// Mantém conexão aberta; bloqueia até desconexão
+	ctx := c.Request.Context()
 	for {
-		if _, _, err := conn.ReadMessage(); err != nil {
+		if _, _, err := conn.Read(ctx); err != nil {
 			return
 		}
 	}

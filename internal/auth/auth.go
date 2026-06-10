@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
-	"wapi/config"
-	"wapi/store/postgres"
+	"botwapp/config"
+	"botwapp/store/postgres"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -69,6 +69,14 @@ func ValidateToken(tokenStr string) (*Claims, error) {
 	}
 
 	return claims, nil
+}
+
+func HashPassword(password string) (string, error) {
+	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hashed), nil
 }
 
 func CreateAdminIfNotExists(username, password string) error {

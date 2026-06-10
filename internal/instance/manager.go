@@ -9,8 +9,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
+	"botwapp/internal/aiagent"
 	"botwapp/internal/hub"
 	"botwapp/internal/whatsapp"
 	"botwapp/store/postgres"
@@ -18,9 +20,11 @@ import (
 	"github.com/google/uuid"
 	qrcode "github.com/skip2/go-qrcode"
 	"go.mau.fi/whatsmeow"
+	waProto "go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
+	"google.golang.org/protobuf/proto"
 )
 
 type Instance struct {
@@ -415,7 +419,11 @@ func (inst *Instance) processMessage(v *events.Message) {
 	}
 
 	if !isGroup {
-		go inst.saveMessage(senderNumber, v.Info.PushName, content, msgTypeStr, v.Info.ID, "in", "", "")
+		if msgTypeStr == "text" {
+			go inst.saveMessageAndReply(senderNumber, v.Info.PushName, content, v.Info.ID)
+		} else {
+			go inst.saveMessage(senderNumber, v.Info.PushName, content, msgTypeStr, v.Info.ID, "in", "", "")
+		}
 	}
 
 	inst.broadcastMessage(msgData)
@@ -584,6 +592,158 @@ func (inst *Instance) RemoveSSEClient(ch chan string) {
 	inst.sseMu.Lock()
 	defer inst.sseMu.Unlock()
 	delete(inst.SSEClients, ch)
+}
+
+// saveMessageAndReply salva mensagem de texto e tenta resposta do agente.
+func (inst *Instance) saveMessageAndReply(phone, pushName, content, msgID string) {
+	inst.saveMessage(phone, pushName, content, "text", msgID, "in", "", "")
+
+	var contactID string
+	err := postgres.DB.QueryRow(
+		`SELECT id FROM contacts WHERE phone = $1 AND instance_id = $2`,
+		phone, inst.ID,
+	).Scan(&contactID)
+	if err != nil {
+		log.Printf("[AGENT] erro ao buscar contato %s: %v", phone, err)
+		return
+	}
+
+	inst.tryAgentReply(contactID, phone)
+}
+
+// tryAgentReply verifica se há agente ativo e envia resposta automática via AI.
+func (inst *Instance) tryAgentReply(contactID, phone string) {
+	// 1. Verificar agent_mode e is_first_contact
+	var agentMode bool
+	var isFirstContact bool
+	err := postgres.DB.QueryRow(
+		`SELECT agent_mode, is_first_contact FROM contacts WHERE id = $1`,
+		contactID,
+	).Scan(&agentMode, &isFirstContact)
+	if err != nil || !agentMode {
+		return
+	}
+
+	// 2. Determinar tipo de contato
+	contactType := "returning"
+	if isFirstContact {
+		contactType = "first_contact"
+	}
+
+	// 3. Buscar agente ativo para esta instância e tipo de contato
+	var agentID, agentPrompt, handoffKeyword string
+	err = postgres.DB.QueryRow(
+		`SELECT id, prompt, handoff_keyword FROM agents WHERE instance_id = $1 AND contact_type = $2 AND is_active = TRUE`,
+		inst.ID, contactType,
+	).Scan(&agentID, &agentPrompt, &handoffKeyword)
+	if err != nil {
+		return // nenhum agente configurado — silencioso
+	}
+
+	// 4. Buscar company_id desta instância
+	var companyID string
+	err = postgres.DB.QueryRow(
+		`SELECT company_id FROM instances WHERE id = $1`,
+		inst.ID,
+	).Scan(&companyID)
+	if err != nil || companyID == "" {
+		log.Printf("[AGENT] company_id não encontrado para instância %s", inst.ID)
+		return
+	}
+
+	// 5. Carregar configuração de AI para esta empresa
+	provider, _ := postgres.GetCompanySetting(companyID, "ai_provider")
+	model, _ := postgres.GetCompanySetting(companyID, "ai_model")
+	apiKey, _ := postgres.GetCompanySetting(companyID, "ai_api_key")
+	if provider == "" || model == "" || apiKey == "" {
+		log.Printf("[AGENT] configuração de AI incompleta para empresa %s", companyID)
+		return
+	}
+
+	// 6. Carregar últimas 20 mensagens de texto deste contato como histórico
+	rows, err := postgres.DB.Query(
+		`SELECT direction, content FROM messages WHERE contact_id = $1 AND type = 'text' ORDER BY created_at DESC LIMIT 20`,
+		contactID,
+	)
+	if err != nil {
+		log.Printf("[AGENT] erro ao buscar histórico: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	var history []aiagent.Message
+	for rows.Next() {
+		var dir, msgContent string
+		rows.Scan(&dir, &msgContent)
+		role := "user"
+		if dir == "out" {
+			role = "assistant"
+		}
+		history = append(history, aiagent.Message{Role: role, Content: msgContent})
+	}
+	// Inverter: do mais antigo para o mais recente
+	for i, j := 0, len(history)-1; i < j; i, j = i+1, j-1 {
+		history[i], history[j] = history[j], history[i]
+	}
+
+	// 7. Chamar AI
+	cfg := aiagent.Config{Provider: provider, Model: model, APIKey: apiKey}
+	aiResp, err := aiagent.Chat(cfg, agentPrompt, history)
+	if err != nil {
+		log.Printf("[AGENT] erro na chamada AI: %v", err)
+		return
+	}
+
+	// 8. Verificar palavra-chave de handoff
+	if handoffKeyword != "" && strings.Contains(aiResp, handoffKeyword) {
+		postgres.DB.Exec(`UPDATE contacts SET agent_mode = FALSE WHERE id = $1`, contactID)
+		aiResp = strings.TrimSpace(strings.ReplaceAll(aiResp, handoffKeyword, ""))
+		payload, _ := json.Marshal(map[string]interface{}{
+			"type":       "agent_mode_changed",
+			"contact_id": contactID,
+			"agent_mode": false,
+		})
+		hub.Global.Broadcast(payload)
+	}
+
+	if aiResp == "" {
+		return
+	}
+
+	// 9. Marcar is_first_contact = false
+	postgres.DB.Exec(`UPDATE contacts SET is_first_contact = FALSE WHERE id = $1`, contactID)
+
+	// 10. Salvar resposta da AI como mensagem de saída
+	outID := uuid.New().String()
+	var createdAt string
+	postgres.DB.QueryRow(
+		`INSERT INTO messages (id, contact_id, direction, content, type, wa_id) VALUES ($1, $2, 'out', $3, 'text', '') RETURNING created_at`,
+		outID, contactID, aiResp,
+	).Scan(&createdAt)
+
+	// 11. Broadcast evento WebSocket new_message
+	wsPayload, _ := json.Marshal(map[string]interface{}{
+		"type": "new_message",
+		"data": map[string]interface{}{
+			"contact_id": contactID,
+			"direction":  "out",
+			"content":    aiResp,
+			"msg_type":   "text",
+			"media_path": "",
+			"media_name": "",
+			"created_at": createdAt,
+		},
+	})
+	hub.Global.Broadcast(wsPayload)
+
+	// 12. Enviar via WhatsApp
+	jid := types.NewJID(phone, types.DefaultUserServer)
+	msg := &waProto.Message{
+		Conversation: proto.String(aiResp),
+	}
+	if _, err := inst.WAClient.SendMessage(context.Background(), jid, msg); err != nil {
+		log.Printf("[AGENT] erro ao enviar mensagem WhatsApp: %v", err)
+	}
 }
 
 // saveMessage persiste a mensagem no banco e faz broadcast via WebSocket.

@@ -30,6 +30,15 @@ function conversationsPage() {
     init() {
       this.loadConversations();
       this.connectWS();
+      // Reconectar WS quando a página volta ao foco (mobile)
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            this.connectWS();
+          }
+        }
+      });
+      window.addEventListener('online', () => this.connectWS());
     },
 
     async loadConversations() {

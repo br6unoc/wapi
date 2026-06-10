@@ -84,6 +84,7 @@ func main() {
 		instances.GET("/:name/status", handler.GetStatus)
 		instances.POST("/:name/connect", handler.ConnectInstance)
 		instances.POST("/:name/disconnect", handler.DisconnectInstance)
+		instances.POST("/:name/reset", handler.ResetInstance)
 		instances.PATCH("/:name/webhook", handler.UpdateWebhook)
 		instances.POST("/:name/apikey", handler.RegenerateAPIKey)
 		instances.PATCH("/:name/config", handler.UpdateConfig)

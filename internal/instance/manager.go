@@ -234,6 +234,40 @@ func (inst *Instance) Disconnect() {
 	inst.saveStatusToDB()
 }
 
+// ResetSession revoga a sessão do WA, apaga o arquivo SQLite e recria o cliente.
+// Após o reset, Connect() vai gerar novo QR.
+func (inst *Instance) ResetSession() error {
+	// Para tudo
+	inst.cancel()
+	if inst.WAClient != nil {
+		// Tenta revogar no servidor do WA (não critica se falhar)
+		_ = inst.WAClient.Logout(context.Background())
+		inst.WAClient.Disconnect()
+	}
+
+	// Apaga o arquivo de sessão SQLite
+	sessionFile := fmt.Sprintf("/app/sessions/%s.db", inst.ID)
+	os.Remove(sessionFile)
+	log.Printf("[RESET] Sessão de %s apagada (%s)", inst.Name, sessionFile)
+
+	// Recria o contexto e o cliente
+	ctx, cancel := context.WithCancel(context.Background())
+	inst.ctx = ctx
+	inst.cancel = cancel
+
+	client, container, err := whatsapp.NewClient(inst.ID)
+	if err != nil {
+		return fmt.Errorf("erro ao recriar cliente: %w", err)
+	}
+	inst.WAClient = client
+	inst.Container = container
+	inst.Status = "disconnected"
+	inst.Phone = ""
+	inst.LastQR = ""
+	inst.saveStatusToDB()
+	return nil
+}
+
 func (inst *Instance) autoReconnect() {
 	for attempt := 1; attempt <= 3; attempt++ {
 		select {

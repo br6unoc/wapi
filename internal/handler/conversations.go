@@ -83,7 +83,7 @@ func GetMessages(c *gin.Context) {
 	phone := c.Param("phone")
 
 	rows, err := postgres.DB.Query(`
-		SELECT m.id, m.direction, m.content, m.type, m.media_path, m.created_at
+		SELECT m.id, m.direction, m.content, m.type, m.media_path, m.media_name, m.created_at
 		FROM messages m
 		JOIN contacts c ON c.id = m.contact_id
 		JOIN instances i ON i.id = m.instance_id
@@ -103,13 +103,14 @@ func GetMessages(c *gin.Context) {
 		Content   string `json:"content"`
 		Type      string `json:"type"`
 		MediaPath string `json:"media_path"`
+		MediaName string `json:"media_name"`
 		CreatedAt string `json:"created_at"`
 	}
 
 	msgs := make([]Msg, 0)
 	for rows.Next() {
 		var msg Msg
-		if err := rows.Scan(&msg.ID, &msg.Direction, &msg.Content, &msg.Type, &msg.MediaPath, &msg.CreatedAt); err != nil {
+		if err := rows.Scan(&msg.ID, &msg.Direction, &msg.Content, &msg.Type, &msg.MediaPath, &msg.MediaName, &msg.CreatedAt); err != nil {
 			continue
 		}
 		msgs = append(msgs, msg)

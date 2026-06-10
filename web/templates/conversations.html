@@ -332,8 +332,62 @@ function conversationsPage() {
               : 'bg-white text-gray-800 rounded-bl-sm border border-gray-100'">
 
             <template x-if="msg.type === 'image'">
-              <div class="flex items-center gap-2 text-gray-500">
-                <span class="text-lg">🖼️</span><span>Imagem</span>
+              <div>
+                <template x-if="msg.media_path">
+                  <a :href="msg.media_path" target="_blank" rel="noopener">
+                    <img :src="msg.media_path" class="rounded-xl max-w-[240px] max-h-[320px] object-cover cursor-pointer" loading="lazy" />
+                  </a>
+                </template>
+                <template x-if="!msg.media_path">
+                  <div class="flex items-center gap-2 text-gray-500">
+                    <span class="text-lg">🖼️</span><span>Imagem</span>
+                  </div>
+                </template>
+                <template x-if="msg.content && msg.content !== '[imagem]'">
+                  <p class="text-sm mt-1 break-words" x-text="msg.content"></p>
+                </template>
+              </div>
+            </template>
+
+            <template x-if="msg.type === 'video'">
+              <div>
+                <template x-if="msg.media_path">
+                  <video controls preload="metadata" class="rounded-xl max-w-[280px] max-h-[320px]">
+                    <source :src="msg.media_path" type="video/mp4">
+                  </video>
+                </template>
+                <template x-if="!msg.media_path">
+                  <div class="flex items-center gap-2 text-gray-500">
+                    <span class="text-lg">🎬</span><span>Vídeo</span>
+                  </div>
+                </template>
+                <template x-if="msg.content && msg.content !== '[vídeo]'">
+                  <p class="text-sm mt-1 break-words" x-text="msg.content"></p>
+                </template>
+              </div>
+            </template>
+
+            <template x-if="msg.type === 'document'">
+              <div>
+                <template x-if="msg.media_path">
+                  <a :href="msg.media_path" :download="msg.media_name || 'documento'"
+                    class="flex items-center gap-2.5 px-3 py-2.5 bg-gray-50 rounded-xl border border-gray-200 hover:bg-gray-100 transition-colors max-w-[240px]">
+                    <svg class="w-8 h-8 text-blue-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                    <div class="min-w-0">
+                      <p class="text-xs font-medium text-gray-700 truncate" x-text="msg.media_name || 'Documento'"></p>
+                      <p class="text-[10px] text-gray-400">Toque para baixar</p>
+                    </div>
+                  </a>
+                </template>
+                <template x-if="!msg.media_path">
+                  <div class="flex items-center gap-2 text-gray-500">
+                    <span class="text-lg">📄</span>
+                    <span x-text="msg.media_name || 'Documento'"></span>
+                  </div>
+                </template>
               </div>
             </template>
             <template x-if="msg.type === 'audio' || msg.type === 'ptt'">
@@ -371,16 +425,6 @@ function conversationsPage() {
                     <span x-text="transcribing ? 'Transcrevendo...' : 'Transcrever'"></span>
                   </button>
                 </template>
-              </div>
-            </template>
-            <template x-if="msg.type === 'video'">
-              <div class="flex items-center gap-2 text-gray-500">
-                <span class="text-lg">🎬</span><span>Vídeo</span>
-              </div>
-            </template>
-            <template x-if="msg.type === 'document'">
-              <div class="flex items-center gap-2 text-gray-500">
-                <span class="text-lg">📄</span><span>Documento</span>
               </div>
             </template>
             <template x-if="msg.type === 'text' || msg.type === ''">

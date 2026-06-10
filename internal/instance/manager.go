@@ -366,12 +366,20 @@ func (inst *Instance) processMessage(v *events.Message) {
 		content = v.Message.GetExtendedTextMessage().GetText()
 		msgData["message"] = content
 	} else if v.Message.GetImageMessage() != nil {
-		content = "[imagem]"
-		if v.Message.GetImageMessage().GetCaption() != "" {
-			content = v.Message.GetImageMessage().GetCaption()
-		}
-		msgData["message"] = content
-		msgTypeStr = "image"
+		msgData["message"] = "[imagem]"
+		msgData["type"] = "image"
+		go inst.processMedia(v, senderNumber, isGroup, msgData, "image", v.Message.GetImageMessage().GetCaption())
+		return
+	} else if v.Message.GetVideoMessage() != nil {
+		msgData["message"] = "[vídeo]"
+		msgData["type"] = "video"
+		go inst.processMedia(v, senderNumber, isGroup, msgData, "video", v.Message.GetVideoMessage().GetCaption())
+		return
+	} else if v.Message.GetDocumentMessage() != nil {
+		msgData["message"] = "[documento]"
+		msgData["type"] = "document"
+		go inst.processMedia(v, senderNumber, isGroup, msgData, "document", v.Message.GetDocumentMessage().GetFileName())
+		return
 	} else if v.Message.GetAudioMessage() != nil {
 		msgData["message"] = "[áudio]"
 		msgData["type"] = "audio"
@@ -380,7 +388,7 @@ func (inst *Instance) processMessage(v *events.Message) {
 	}
 
 	if !isGroup {
-		go inst.saveMessage(senderNumber, v.Info.PushName, content, msgTypeStr, v.Info.ID, "in", "")
+		go inst.saveMessage(senderNumber, v.Info.PushName, content, msgTypeStr, v.Info.ID, "in", "", "")
 	}
 
 	inst.broadcastMessage(msgData)
@@ -393,7 +401,7 @@ func (inst *Instance) processAudio(v *events.Message, senderNumber string, isGro
 	if err != nil {
 		log.Printf("[AUDIO] Erro ao baixar áudio: %v", err)
 		if !isGroup {
-			go inst.saveMessage(senderNumber, v.Info.PushName, "[áudio]", "audio", v.Info.ID, "in", "")
+			go inst.saveMessage(senderNumber, v.Info.PushName, "[áudio]", "audio", v.Info.ID, "in", "", "")
 		}
 		inst.broadcastMessage(msgData)
 		go inst.sendWebhook(msgData)
@@ -415,7 +423,94 @@ func (inst *Instance) processAudio(v *events.Message, senderNumber string, isGro
 	}
 
 	if !isGroup {
-		go inst.saveMessage(senderNumber, v.Info.PushName, "[áudio]", "audio", v.Info.ID, "in", webPath)
+		go inst.saveMessage(senderNumber, v.Info.PushName, "[áudio]", "audio", v.Info.ID, "in", webPath, "")
+	}
+	inst.broadcastMessage(msgData)
+	go inst.sendWebhook(msgData)
+}
+
+func (inst *Instance) processMedia(v *events.Message, senderNumber string, isGroup bool, msgData map[string]interface{}, mediaType, caption string) {
+	var (
+		data      []byte
+		err       error
+		ext       string
+		mediaName string
+	)
+
+	switch mediaType {
+	case "image":
+		img := v.Message.GetImageMessage()
+		data, err = inst.WAClient.Download(context.Background(), img)
+		mime := img.GetMimetype()
+		switch mime {
+		case "image/png":
+			ext = "png"
+		case "image/webp":
+			ext = "webp"
+		default:
+			ext = "jpg"
+		}
+	case "video":
+		data, err = inst.WAClient.Download(context.Background(), v.Message.GetVideoMessage())
+		ext = "mp4"
+	case "document":
+		doc := v.Message.GetDocumentMessage()
+		data, err = inst.WAClient.Download(context.Background(), doc)
+		mediaName = doc.GetFileName()
+		if mediaName == "" {
+			mediaName = "documento"
+		}
+		ext = "bin"
+		if n := mediaName; len(n) > 0 {
+			if idx := len(n) - 1; idx >= 0 {
+				for i := len(n) - 1; i >= 0; i-- {
+					if n[i] == '.' {
+						ext = n[i+1:]
+						break
+					}
+				}
+			}
+		}
+	}
+
+	content := caption
+	if content == "" {
+		switch mediaType {
+		case "image":
+			content = "[imagem]"
+		case "video":
+			content = "[vídeo]"
+		case "document":
+			content = "[documento]"
+		}
+	}
+
+	if err != nil {
+		log.Printf("[MEDIA] Erro ao baixar %s: %v", mediaType, err)
+		if !isGroup {
+			go inst.saveMessage(senderNumber, v.Info.PushName, content, mediaType, v.Info.ID, "in", "", mediaName)
+		}
+		inst.broadcastMessage(msgData)
+		go inst.sendWebhook(msgData)
+		return
+	}
+
+	mediaDir := fmt.Sprintf("/app/media/%ss", mediaType)
+	os.MkdirAll(mediaDir, 0755)
+	fsPath := fmt.Sprintf("%s/%s.%s", mediaDir, v.Info.ID, ext)
+	webPath := ""
+	if err := os.WriteFile(fsPath, data, 0644); err != nil {
+		log.Printf("[MEDIA] Erro ao salvar %s: %v", mediaType, err)
+	} else {
+		webPath = fmt.Sprintf("/media/%ss/%s.%s", mediaType, v.Info.ID, ext)
+		msgData["media_path"] = webPath
+		msgData["media_name"] = mediaName
+	}
+
+	msgData["message"] = content
+
+	if !isGroup {
+		go inst.saveMessage(senderNumber, v.Info.PushName, content, mediaType, v.Info.ID, "in", webPath, mediaName)
 	}
 	inst.broadcastMessage(msgData)
 	go inst.sendWebhook(msgData)
@@ -465,7 +560,7 @@ func (inst *Instance) RemoveSSEClient(ch chan string) {
 }
 
 // saveMessage persiste a mensagem no banco e faz broadcast via WebSocket.
-func (inst *Instance) saveMessage(phone, pushName, content, msgType, waID, direction, mediaPath string) {
+func (inst *Instance) saveMessage(phone, pushName, content, msgType, waID, direction, mediaPath, mediaName string) {
 	var contactID string
 	err := postgres.DB.QueryRow(
 		`INSERT INTO contacts (instance_id, phone, name)
@@ -482,10 +577,10 @@ func (inst *Instance) saveMessage(phone, pushName, content, msgType, waID, direc
 	msgID := uuid.New().String()
 	var createdAt string
 	err = postgres.DB.QueryRow(
-		`INSERT INTO messages (id, instance_id, contact_id, direction, content, type, wa_message_id, media_path)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`INSERT INTO messages (id, instance_id, contact_id, direction, content, type, wa_message_id, media_path, media_name)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 RETURNING created_at`,
-		msgID, inst.ID, contactID, direction, content, msgType, waID, mediaPath,
+		msgID, inst.ID, contactID, direction, content, msgType, waID, mediaPath, mediaName,
 	).Scan(&createdAt)
 	if err != nil {
 		log.Printf("[DB] Erro ao salvar mensagem: %v", err)
@@ -512,6 +607,7 @@ func (inst *Instance) saveMessage(phone, pushName, content, msgType, waID, direc
 			"content":       content,
 			"type":          msgType,
 			"media_path":    mediaPath,
+			"media_name":    mediaName,
 			"created_at":    createdAt,
 		},
 	}

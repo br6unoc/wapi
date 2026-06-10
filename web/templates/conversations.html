@@ -237,9 +237,37 @@ function conversationsPage() {
     async sendMedia() {
       if (!this.mediaFile || !this.activeConv) return;
       this.sendingMedia = true;
+
+      // Determinar tipo para update otimista
+      const mt = this.mediaFile.type;
+      let msgType = 'document';
+      if (mt.startsWith('audio/')) msgType = 'audio';
+      else if (mt.startsWith('image/')) msgType = 'image';
+      else if (mt.startsWith('video/')) msgType = 'video';
+
+      const contentMap = { audio: '[áudio]', image: '[imagem]', video: '[vídeo]', document: '[documento]' };
+      const tempId = 'temp-' + Date.now();
+
+      // Update otimista: mostra a mídia imediatamente na thread
+      this.messages.push({
+        id: tempId,
+        direction: 'out',
+        content: contentMap[msgType] || '[mídia]',
+        type: msgType,
+        media_path: this.mediaPreview,
+        media_name: this.mediaFile.name,
+        created_at: new Date().toISOString(),
+        _pending: true,
+      });
+      this.$nextTick(() => this.scrollToBottom());
+
       const form = new FormData();
       form.append('file', this.mediaFile);
       if (this.mediaCaption) form.append('caption', this.mediaCaption);
+
+      // Limpa o preview para liberar para nova gravação/seleção
+      this.clearMedia();
+
       try {
         const r = await fetch(
           `/api/conversations/${this.activeConv.instance_name}/${this.activeConv.phone}/send-media`,
@@ -247,12 +275,11 @@ function conversationsPage() {
         );
         if (!r.ok) {
           const err = await r.json().catch(() => ({}));
+          this.messages = this.messages.filter(m => m.id !== tempId);
           alert('Erro ao enviar: ' + (err.error || r.status));
-        } else {
-          this.clearMedia();
-          this.$nextTick(() => this.scrollToBottom());
         }
       } catch(e) {
+        this.messages = this.messages.filter(m => m.id !== tempId);
         alert('Erro ao enviar: ' + e.message);
       } finally {
         this.sendingMedia = false;

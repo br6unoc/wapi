@@ -508,8 +508,9 @@ function conversationsPage() {
             <template x-if="msg.type === 'audio' || msg.type === 'ptt'">
               <div class="space-y-2" x-data="{ transcribing: false, transcribed: msg.content !== '[áudio]' && msg.content !== '' }">
                 <template x-if="msg.media_path">
-                  <audio controls preload="none" class="w-full max-w-xs h-8" style="min-width:200px">
+                  <audio controls preload="metadata" class="w-full max-w-xs h-8" style="min-width:200px">
                     <source :src="msg.media_path" type="audio/ogg">
+                    <source :src="msg.media_path" type="audio/webm">
                   </audio>
                 </template>
                 <template x-if="!msg.media_path">
@@ -599,7 +600,7 @@ function conversationsPage() {
             <p class="text-[10px] text-gray-400 mb-2"
               x-text="mediaFile ? (mediaFile.size > 1048576 ? (mediaFile.size/1048576).toFixed(1)+'MB' : (mediaFile.size/1024).toFixed(0)+'KB') : ''"></p>
             <div x-show="mediaFile && mediaFile.type.startsWith('audio/')" class="mb-2">
-              <audio :src="mediaPreview" controls class="w-full h-8" style="min-width:160px"></audio>
+              <audio :src="mediaPreview" controls preload="metadata" class="w-full h-8" style="min-width:160px"></audio>
               <p class="text-[10px] text-indigo-600 mt-1">Será convertido para OGG/Opus automaticamente</p>
             </div>
             <input x-show="mediaFile && !mediaFile.type.startsWith('audio/')"

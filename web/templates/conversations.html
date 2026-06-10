@@ -1,6 +1,16 @@
 {{ template "layout.html" . }}
 {{ define "title" }}Conversas — BotWapp{{ end }}
 {{ define "content" }}
+<style>
+@keyframes recWave {
+  0%, 100% { height: var(--h); }
+  50% { height: calc(var(--h) * 0.3); }
+}
+.rec-bar {
+  height: var(--h);
+  animation: recWave 0.7s ease-in-out infinite;
+}
+</style>
 
 <script>
 const TOKEN = document.querySelector('meta[name="auth-token"]')?.content || '';
@@ -238,6 +248,75 @@ function conversationsPage() {
       } finally {
         this.sendingMedia = false;
       }
+    },
+
+    // ── Gravação de áudio ──────────────────────────────────────
+    recording: false,
+    recordingSeconds: 0,
+    recordingTimer: null,
+    mediaRecorder: null,
+    recordedChunks: [],
+
+    formatRecordingTime(s) {
+      const m = Math.floor(s / 60);
+      const sec = s % 60;
+      return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+    },
+
+    async startRecording() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        this.recordedChunks = [];
+        this.recordingSeconds = 0;
+        const mimeType = ['audio/webm;codecs=opus','audio/ogg;codecs=opus','audio/webm','audio/ogg']
+          .find(t => { try { return MediaRecorder.isTypeSupported(t); } catch(e) { return false; } }) || '';
+        const options = mimeType ? { mimeType } : {};
+        this.mediaRecorder = new MediaRecorder(stream, options);
+        this.mediaRecorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) this.recordedChunks.push(e.data);
+        };
+        this.mediaRecorder.onstop = () => {
+          stream.getTracks().forEach(t => t.stop());
+          if (!this.recordedChunks.length) return;
+          const blob = new Blob(this.recordedChunks, { type: mimeType || 'audio/webm' });
+          const ext = (mimeType || '').includes('ogg') ? 'ogg' : 'webm';
+          const file = new File([blob], `audio_${Date.now()}.${ext}`, { type: blob.type });
+          this.mediaFile = file;
+          this.mediaPreview = URL.createObjectURL(blob);
+          this.recordedChunks = [];
+        };
+        this.mediaRecorder.start();
+        this.recording = true;
+        this.recordingTimer = setInterval(() => {
+          this.recordingSeconds++;
+          if (this.recordingSeconds >= 120) this.stopRecording();
+        }, 1000);
+      } catch(e) {
+        alert('Microfone indisponível: ' + e.message);
+      }
+    },
+
+    stopRecording() {
+      if (!this.mediaRecorder || this.mediaRecorder.state === 'inactive') return;
+      clearInterval(this.recordingTimer);
+      this.recordingTimer = null;
+      this.recording = false;
+      this.mediaRecorder.stop();
+    },
+
+    cancelRecording() {
+      clearInterval(this.recordingTimer);
+      this.recordingTimer = null;
+      this.recordingSeconds = 0;
+      this.recording = false;
+      if (this.mediaRecorder) {
+        this.mediaRecorder.ondataavailable = null;
+        this.mediaRecorder.onstop = null;
+        try { this.mediaRecorder.stream?.getTracks().forEach(t => t.stop()); } catch(e) {}
+        try { if (this.mediaRecorder.state !== 'inactive') this.mediaRecorder.stop(); } catch(e) {}
+        this.mediaRecorder = null;
+      }
+      this.recordedChunks = [];
     },
   }
 }
@@ -542,39 +621,78 @@ function conversationsPage() {
       </div>
 
       <template x-if="activeConv">
-        <div class="flex items-end gap-2 px-4 py-3">
-          <input id="media-file-input" type="file" accept="image/*,video/*,audio/*" class="hidden" @change="onFileSelected($event)"/>
-          <button @click="document.getElementById('media-file-input').click()"
-            class="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center bg-gray-100 hover:bg-gray-200 text-gray-500 transition-colors">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
-            </svg>
-          </button>
-          <textarea
-            x-model="messageInput"
-            @keydown.enter.prevent="!$event.shiftKey && sendMessage()"
-            placeholder="Digite uma mensagem..."
-            :disabled="sending"
-            rows="1"
-            @input="$el.style.height='auto'; $el.style.height=Math.min($el.scrollHeight,120)+'px'"
-            class="flex-1 bg-gray-50 border border-gray-200 rounded-2xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:bg-white transition-colors disabled:opacity-50 resize-none overflow-hidden min-h-[42px]"
-            style="max-height:120px"
-          ></textarea>
-          <button @click="sendMessage()"
-            :disabled="sending || !messageInput.trim()"
-            class="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center transition-all"
-            :class="messageInput.trim() && !sending
-              ? 'bg-green-500 hover:bg-green-600 text-white shadow-sm'
-              : 'bg-gray-200 text-gray-400 cursor-not-allowed'">
-            <svg x-show="!sending" class="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z"/>
-            </svg>
-            <svg x-show="sending" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-            </svg>
-          </button>
+        <div>
+          <!-- Barra de gravação (visível durante gravação) -->
+          <div x-show="recording" class="flex items-center gap-2 px-4 py-3">
+            <button @click="cancelRecording()"
+              class="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center bg-gray-100 hover:bg-red-100 text-gray-500 hover:text-red-500 transition-colors">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+              </svg>
+            </button>
+            <div class="flex-1 flex items-center gap-3 bg-red-50 border border-red-200 rounded-2xl px-4 py-2.5">
+              <span class="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse flex-shrink-0"></span>
+              <span class="text-sm font-medium text-red-600 tabular-nums" x-text="formatRecordingTime(recordingSeconds)"></span>
+              <div class="flex items-end gap-px flex-1 h-5">
+                <div class="w-1 bg-red-400 rounded-full rec-bar" style="--h:6px"></div>
+                <div class="w-1 bg-red-400 rounded-full rec-bar" style="--h:12px;animation-delay:.1s"></div>
+                <div class="w-1 bg-red-400 rounded-full rec-bar" style="--h:16px;animation-delay:.2s"></div>
+                <div class="w-1 bg-red-400 rounded-full rec-bar" style="--h:10px;animation-delay:.3s"></div>
+                <div class="w-1 bg-red-400 rounded-full rec-bar" style="--h:6px;animation-delay:.4s"></div>
+                <div class="w-1 bg-red-400 rounded-full rec-bar" style="--h:14px;animation-delay:.15s"></div>
+                <div class="w-1 bg-red-400 rounded-full rec-bar" style="--h:8px;animation-delay:.25s"></div>
+                <div class="w-1 bg-red-400 rounded-full rec-bar" style="--h:16px;animation-delay:.35s"></div>
+              </div>
+              <span class="text-xs text-red-400 flex-shrink-0">Gravando...</span>
+            </div>
+            <button @click="stopRecording()"
+              class="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center bg-green-500 hover:bg-green-600 text-white shadow-sm transition-colors">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+              </svg>
+            </button>
+          </div>
+
+          <!-- Barra normal (oculta durante gravação) -->
+          <div x-show="!recording" class="flex items-end gap-2 px-4 py-3">
+            <input id="media-file-input" type="file" accept="image/*,video/*,audio/*" class="hidden" @change="onFileSelected($event)"/>
+            <button @click="document.getElementById('media-file-input').click()"
+              class="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center bg-gray-100 hover:bg-gray-200 text-gray-500 transition-colors">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
+              </svg>
+            </button>
+            <textarea
+              x-model="messageInput"
+              @keydown.enter.prevent="!$event.shiftKey && sendMessage()"
+              placeholder="Digite uma mensagem..."
+              :disabled="sending"
+              rows="1"
+              @input="$el.style.height='auto'; $el.style.height=Math.min($el.scrollHeight,120)+'px'"
+              class="flex-1 bg-gray-50 border border-gray-200 rounded-2xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:bg-white transition-colors disabled:opacity-50 resize-none overflow-hidden min-h-[42px]"
+              style="max-height:120px"
+            ></textarea>
+            <!-- Botão enviar (quando há texto) -->
+            <button x-show="!!messageInput.trim()" @click="sendMessage()" :disabled="sending"
+              class="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center transition-all bg-green-500 hover:bg-green-600 text-white shadow-sm">
+              <svg x-show="!sending" class="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z"/>
+              </svg>
+              <svg x-show="sending" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+              </svg>
+            </button>
+            <!-- Botão microfone (quando não há texto) -->
+            <button x-show="!messageInput.trim()" @click="startRecording()"
+              class="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center transition-all bg-gray-200 hover:bg-gray-300 text-gray-600">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4M12 3a4 4 0 014 4v4a4 4 0 01-8 0V7a4 4 0 014-4z"/>
+              </svg>
+            </button>
+          </div>
         </div>
       </template>
       <template x-if="!activeConv">

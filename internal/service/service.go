@@ -113,6 +113,7 @@ func SendMedia(inst *instance.Instance, to string, data []byte, mimetype, filena
 	var msg *waProto.Message
 
 	if isAudio {
+		secs := getAudioDurationSeconds(data)
 		msg = &waProto.Message{
 			AudioMessage: &waProto.AudioMessage{
 				URL:           proto.String(uploaded.URL),
@@ -122,7 +123,8 @@ func SendMedia(inst *instance.Instance, to string, data []byte, mimetype, filena
 				FileSHA256:    uploaded.FileSHA256,
 				FileLength:    &uploaded.FileLength,
 				Mimetype:      proto.String("audio/ogg; codecs=opus"),
-				PTT:           proto.Bool(false),
+				Seconds:       proto.Uint32(secs),
+				PTT:           proto.Bool(true),
 			},
 		}
 	} else if strings.HasPrefix(mimetype, "image/") {
@@ -197,6 +199,30 @@ func GetGroups(inst *instance.Instance) ([]map[string]interface{}, error) {
 	}
 
 	return result, nil
+}
+
+// getAudioDurationSeconds retorna a duração em segundos de um arquivo de áudio usando ffprobe.
+func getAudioDurationSeconds(data []byte) uint32 {
+	tmp, err := os.CreateTemp("", "dur-*.ogg")
+	if err != nil {
+		return 0
+	}
+	defer os.Remove(tmp.Name())
+	tmp.Write(data)
+	tmp.Close()
+
+	out, err := exec.Command("ffprobe",
+		"-v", "quiet",
+		"-show_entries", "format=duration",
+		"-of", "csv=p=0",
+		tmp.Name(),
+	).Output()
+	if err != nil {
+		return 0
+	}
+	var secs float64
+	fmt.Sscanf(strings.TrimSpace(string(out)), "%f", &secs)
+	return uint32(secs)
 }
 
 // ConvertToOpus converte qualquer áudio para OGG/Opus (formato aceito pelo WhatsApp iOS e Android).

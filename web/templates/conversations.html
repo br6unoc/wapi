@@ -301,7 +301,12 @@ function conversationsPage() {
           if (this.recordingSeconds >= 120) this.stopRecording();
         }, 1000);
       } catch(e) {
-        alert('Microfone indisponível: ' + e.message);
+        const isPermission = e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError';
+        if (isPermission) {
+          alert('Permissão de microfone negada.\n\niOS: Ajustes → Safari → bot.botwapp.com.br → Microfone → Permitir\n\nAndroid: Configurações do site (🔒 na barra de endereço) → Microfone → Permitir');
+        } else {
+          alert('Microfone indisponível: ' + e.message);
+        }
       }
     },
 

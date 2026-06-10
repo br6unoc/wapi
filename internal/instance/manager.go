@@ -223,52 +223,35 @@ func (inst *Instance) Connect() error {
 	return err
 }
 
+// Disconnect faz logout completo do WhatsApp (revoga a sessão no celular),
+// apaga o arquivo de sessão local e para o autoReconnect.
+// Na próxima vez que o usuário clicar em Conectar, um novo QR será gerado.
 func (inst *Instance) Disconnect() {
-	inst.cancel()
 	if inst.WAClient != nil {
-		inst.WAClient.Disconnect()
-	}
-	inst.Status = "disconnected"
-	inst.Phone = ""
-	inst.LastQR = ""
-	inst.saveStatusToDB()
-}
-
-// ResetSession revoga a sessão do WA, apaga o arquivo SQLite e recria o cliente.
-// Após o reset, Connect() vai gerar novo QR.
-func (inst *Instance) ResetSession() error {
-	// Para tudo
-	inst.cancel()
-	if inst.WAClient != nil {
-		// Tenta revogar no servidor do WA (não critica se falhar)
+		// Logout revoga a sessão no servidor do WA (remove o dispositivo vinculado)
 		_ = inst.WAClient.Logout(context.Background())
 		inst.WAClient.Disconnect()
 	}
 
-	// Apaga o arquivo de sessão SQLite
+	// Apaga o arquivo de sessão para garantir novo QR no próximo Connect
 	sessionFile := fmt.Sprintf("/app/sessions/%s.db", inst.ID)
 	os.Remove(sessionFile)
-	log.Printf("[RESET] Sessão de %s apagada (%s)", inst.Name, sessionFile)
+	log.Printf("[DISCONNECT] Sessão de %s revogada e apagada", inst.Name)
 
-	// Recria o contexto e o cliente
-	ctx, cancel := context.WithCancel(context.Background())
-	inst.ctx = ctx
-	inst.cancel = cancel
-
-	client, container, err := whatsapp.NewClient(inst.ID)
-	if err != nil {
-		return fmt.Errorf("erro ao recriar cliente: %w", err)
-	}
-	inst.WAClient = client
-	inst.Container = container
+	inst.cancel()
 	inst.Status = "disconnected"
 	inst.Phone = ""
 	inst.LastQR = ""
 	inst.saveStatusToDB()
-	return nil
 }
 
 func (inst *Instance) autoReconnect() {
+	// Sem sessão salva não há o que reconectar — aguarda ação do usuário
+	if inst.WAClient == nil || inst.WAClient.Store.ID == nil {
+		log.Printf("[RECONNECT] Instância %s sem sessão válida, aguardando novo QR", inst.Name)
+		return
+	}
+
 	for attempt := 1; attempt <= 3; attempt++ {
 		select {
 		case <-inst.ctx.Done():
@@ -276,6 +259,11 @@ func (inst *Instance) autoReconnect() {
 		case <-time.After(time.Duration(attempt*30) * time.Second):
 		}
 		if inst.Status == "connected" {
+			return
+		}
+		// Reconfirma: sessão pode ter sido apagada enquanto aguardava
+		if inst.WAClient == nil || inst.WAClient.Store.ID == nil {
+			log.Printf("[RECONNECT] Sessão de %s foi removida, cancelando reconexão", inst.Name)
 			return
 		}
 		log.Printf("[RECONNECT] Tentativa %d/3 para instância %s", attempt, inst.Name)

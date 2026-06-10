@@ -167,22 +167,6 @@ func DisconnectInstance(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "instância desconectada"})
 }
 
-func ResetInstance(c *gin.Context) {
-	name := c.Param("name")
-	inst, ok := instance.Global.GetByName(name)
-	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
-		return
-	}
-
-	if err := inst.ResetSession(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "sessão apagada — reconecte para gerar novo QR"})
-}
-
 func UpdateWebhook(c *gin.Context) {
 	name := c.Param("name")
 	inst, ok := instance.Global.GetByName(name)

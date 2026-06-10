@@ -32,7 +32,8 @@ func ListConversations(c *gin.Context) {
 			m.content AS last_message,
 			m.direction AS last_direction,
 			m.type AS last_type,
-			m.created_at AS last_message_at
+			m.created_at AS last_message_at,
+			c.agent_mode
 		FROM contacts c
 		JOIN instances i ON i.id = c.instance_id
 		LEFT JOIN LATERAL (
@@ -63,6 +64,7 @@ func ListConversations(c *gin.Context) {
 		LastDirection string `json:"last_direction"`
 		LastType      string `json:"last_type"`
 		LastMessageAt string `json:"last_message_at"`
+		AgentMode     bool   `json:"agent_mode"`
 	}
 
 	convs := make([]Conv, 0)
@@ -72,7 +74,7 @@ func ListConversations(c *gin.Context) {
 			&conv.ContactID, &conv.Phone, &conv.Name, &conv.UnreadCount,
 			&conv.InstanceID, &conv.InstanceName,
 			&conv.LastMessage, &conv.LastDirection, &conv.LastType,
-			&conv.LastMessageAt,
+			&conv.LastMessageAt, &conv.AgentMode,
 		); err != nil {
 			continue
 		}
@@ -261,6 +263,15 @@ func SendMediaFromUI(c *gin.Context) {
 	jsonBytes, _ := json.Marshal(payload)
 	hub.Global.Broadcast(jsonBytes)
 
+	// Desativa agente quando humano envia mensagem
+	postgres.DB.Exec(`UPDATE contacts SET agent_mode = FALSE WHERE id = $1`, contactID)
+	mediaAgentPayload, _ := json.Marshal(map[string]interface{}{
+		"type":       "agent_mode_changed",
+		"contact_id": contactID,
+		"agent_mode": false,
+	})
+	hub.Global.Broadcast(mediaAgentPayload)
+
 	c.JSON(http.StatusOK, gin.H{"ok": true, "id": msgID})
 
 	// Envia para o WhatsApp em background
@@ -299,6 +310,70 @@ func TranscribeMessage(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"text": text})
+}
+
+func TakeoverConversation(c *gin.Context) {
+	name := c.Param("name")
+	phone := c.Param("phone")
+
+	inst, ok := instance.Global.GetByName(name)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
+		return
+	}
+
+	var contactID string
+	err := postgres.DB.QueryRow(
+		`SELECT id FROM contacts WHERE phone = $1 AND instance_id = $2`,
+		phone, inst.ID,
+	).Scan(&contactID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contato não encontrado"})
+		return
+	}
+
+	postgres.DB.Exec(`UPDATE contacts SET agent_mode = FALSE WHERE id = $1`, contactID)
+
+	payload, _ := json.Marshal(map[string]interface{}{
+		"type":       "agent_mode_changed",
+		"contact_id": contactID,
+		"agent_mode": false,
+	})
+	hub.Global.Broadcast(payload)
+
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func ResumeAgent(c *gin.Context) {
+	name := c.Param("name")
+	phone := c.Param("phone")
+
+	inst, ok := instance.Global.GetByName(name)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
+		return
+	}
+
+	var contactID string
+	err := postgres.DB.QueryRow(
+		`SELECT id FROM contacts WHERE phone = $1 AND instance_id = $2`,
+		phone, inst.ID,
+	).Scan(&contactID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contato não encontrado"})
+		return
+	}
+
+	postgres.DB.Exec(`UPDATE contacts SET agent_mode = TRUE WHERE id = $1`, contactID)
+
+	payload, _ := json.Marshal(map[string]interface{}{
+		"type":       "agent_mode_changed",
+		"contact_id": contactID,
+		"agent_mode": true,
+	})
+	hub.Global.Broadcast(payload)
+
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 // MarkAsRead zera o unread_count do contato quando o atendente abre a conversa.
@@ -385,6 +460,15 @@ func SendFromUI(c *gin.Context) {
 	}
 	jsonBytes, _ := json.Marshal(payload)
 	hub.Global.Broadcast(jsonBytes)
+
+	// Desativa agente quando humano envia mensagem
+	postgres.DB.Exec(`UPDATE contacts SET agent_mode = FALSE WHERE id = $1`, contactID)
+	agentPayload, _ := json.Marshal(map[string]interface{}{
+		"type":       "agent_mode_changed",
+		"contact_id": contactID,
+		"agent_mode": false,
+	})
+	hub.Global.Broadcast(agentPayload)
 
 	// Retorna imediatamente — sem travar o frontend
 	c.JSON(http.StatusOK, gin.H{"ok": true})

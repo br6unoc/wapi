@@ -98,9 +98,8 @@ func main() {
 		apiGroup.POST("/conversations/:name/:phone/send-media", handler.SendMediaFromUI)
 		apiGroup.POST("/conversations/:name/:phone/read", handler.MarkAsRead)
 		apiGroup.POST("/messages/:id/transcribe", handler.TranscribeMessage)
-		// TODO: descomentar quando handler.TakeoverConversation e handler.ResumeAgent forem implementados
-		// apiGroup.POST("/conversations/:name/:phone/takeover", handler.TakeoverConversation)
-		// apiGroup.POST("/conversations/:name/:phone/resume", handler.ResumeAgent)
+		apiGroup.POST("/conversations/:name/:phone/takeover", handler.TakeoverConversation)
+		apiGroup.POST("/conversations/:name/:phone/resume", handler.ResumeAgent)
 	}
 
 	// Agentes (admin only)

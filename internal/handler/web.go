@@ -3,8 +3,9 @@ package handler
 import (
 	"html/template"
 	"net/http"
-	"wapi/internal/auth"
-	"wapi/internal/instance"
+	"botwapp/internal/auth"
+	"botwapp/internal/instance"
+	"botwapp/store/postgres"
 
 	"github.com/gin-gonic/gin"
 )
@@ -39,8 +40,14 @@ func WebAuthMiddleware() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
+		var role, companyID string
+		postgres.DB.QueryRow(`SELECT COALESCE(role,'admin'), COALESCE(company_id::text,'') FROM users WHERE id = $1`, claims.UserID).Scan(&role, &companyID)
+
 		c.Set("token", token)
+		c.Set("user_id", claims.UserID)
 		c.Set("username", claims.Username)
+		c.Set("role", role)
+		c.Set("company_id", companyID)
 		c.Next()
 	}
 }

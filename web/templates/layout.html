@@ -2,14 +2,14 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="auth-token" content="{{ .Token }}">
   <title>{{ block "title" . }}BotWapp{{ end }}</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 <style>[x-cloak]{display:none!important}</style>
 </head>
-<body class="h-screen overflow-hidden flex bg-gray-100" x-data="{ sidebarOpen: false }">
+<body class="overflow-hidden flex bg-gray-100" style="height:100dvh;height:100svh;" x-data="{ sidebarOpen: false }">
 
   {{ if .Token }}
   <!-- Overlay mobile -->
@@ -123,7 +123,7 @@
     </header>
     {{ end }}
 
-    <main class="flex-1 min-h-0">
+    <main class="flex-1 min-h-0 overflow-hidden">
       {{ block "content" . }}{{ end }}
     </main>
   </div>

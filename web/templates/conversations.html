@@ -195,10 +195,10 @@ function conversationsPage() {
 }
 </script>
 
-<div x-data="conversationsPage()" x-init="init()" class="flex h-full overflow-hidden bg-white">
+<div x-data="conversationsPage()" x-init="init()" class="flex overflow-hidden bg-white" style="height:100%;max-height:100%;">
 
   <!-- PAINEL ESQUERDO: lista de conversas -->
-  <div class="flex flex-col bg-white border-r border-gray-200 flex-shrink-0 w-full sm:w-80"
+  <div class="flex flex-col bg-white border-r border-gray-200 flex-shrink-0 w-full sm:w-80 min-h-0"
        :class="mobilePanel === 'thread' ? 'hidden sm:flex' : 'flex'">
 
     <div class="flex items-center justify-between px-4 py-3.5 border-b border-gray-100 bg-white">
@@ -280,7 +280,7 @@ function conversationsPage() {
   </div>
 
   <!-- PAINEL DIREITO: thread -->
-  <div class="flex-1 flex flex-col min-w-0"
+  <div class="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden"
        style="background:#f0f2f5"
        :class="mobilePanel === 'list' ? 'hidden sm:flex' : 'flex'">
 
@@ -403,7 +403,7 @@ function conversationsPage() {
       </template>
     </div>
 
-    <div class="bg-white border-t border-gray-100 px-4 py-3 flex-shrink-0">
+    <div class="bg-white border-t border-gray-100 px-4 py-3 flex-shrink-0" style="padding-bottom:max(12px,env(safe-area-inset-bottom));">
       <template x-if="activeConv">
         <div class="flex items-end gap-2">
           <textarea

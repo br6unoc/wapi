@@ -2,9 +2,12 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"botwapp/internal/hub"
@@ -116,6 +119,144 @@ func GetMessages(c *gin.Context) {
 		msgs = append(msgs, msg)
 	}
 	c.JSON(http.StatusOK, msgs)
+}
+
+// SendMediaFromUI envia foto ou vídeo via upload multipart (JWT auth).
+func SendMediaFromUI(c *gin.Context) {
+	instanceName := c.Param("name")
+	phone := c.Param("phone")
+
+	inst, ok := instance.Global.GetByName(instanceName)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
+		return
+	}
+
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "arquivo obrigatório"})
+		return
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "erro ao ler arquivo"})
+		return
+	}
+
+	caption := c.Request.FormValue("caption")
+	mimetype := header.Header.Get("Content-Type")
+	if mimetype == "" {
+		mimetype = http.DetectContentType(data)
+	}
+	filename := header.Filename
+
+	isImage := strings.HasPrefix(mimetype, "image/")
+	isVideo := strings.HasPrefix(mimetype, "video/")
+	isAudio := strings.HasPrefix(mimetype, "audio/")
+
+	var msgType string
+	switch {
+	case isImage:
+		msgType = "image"
+	case isVideo:
+		msgType = "video"
+	case isAudio:
+		msgType = "audio"
+	default:
+		msgType = "document"
+	}
+
+	number := strings.TrimPrefix(phone, "+")
+	number = strings.ReplaceAll(number, " ", "")
+
+	// Salva na pasta de mídia
+	ext := filepath.Ext(filename)
+	if ext == "" {
+		switch msgType {
+		case "image":
+			ext = ".jpg"
+		case "video":
+			ext = ".mp4"
+		case "audio":
+			ext = ".ogg"
+		default:
+			ext = ".bin"
+		}
+	}
+	mediaID := uuid.New().String()
+	mediaDir := fmt.Sprintf("/app/media/%ss", msgType)
+	os.MkdirAll(mediaDir, 0755)
+	fsPath := fmt.Sprintf("%s/%s%s", mediaDir, mediaID, ext)
+	webPath := fmt.Sprintf("/media/%ss/%s%s", msgType, mediaID, ext)
+	if err := os.WriteFile(fsPath, data, 0644); err != nil {
+		log.Printf("[SEND_MEDIA] Erro ao salvar arquivo: %v", err)
+		webPath = ""
+	}
+
+	// Salva no DB antes de enviar (optimistic)
+	var contactID string
+	if err := postgres.DB.QueryRow(
+		`INSERT INTO contacts (instance_id, phone, name)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (instance_id, phone) DO UPDATE SET name = EXCLUDED.name
+		 RETURNING id`,
+		inst.ID, number, number,
+	).Scan(&contactID); err != nil {
+		log.Printf("[DB] Erro ao upsert contact: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "erro ao salvar contato"})
+		return
+	}
+
+	content := caption
+	if content == "" {
+		content = "[" + msgType + "]"
+	}
+	mediaName := filename
+
+	msgID := uuid.New().String()
+	var createdAt string
+	if err := postgres.DB.QueryRow(
+		`INSERT INTO messages (id, instance_id, contact_id, direction, content, type, media_path, media_name)
+		 VALUES ($1, $2, $3, 'out', $4, $5, $6, $7)
+		 RETURNING created_at`,
+		msgID, inst.ID, contactID, content, msgType, webPath, mediaName,
+	).Scan(&createdAt); err != nil {
+		log.Printf("[DB] Erro ao salvar mensagem de mídia: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "erro ao salvar mensagem"})
+		return
+	}
+
+	// Broadcast imediato para o UI
+	payload := map[string]interface{}{
+		"event": "new_message",
+		"data": map[string]interface{}{
+			"id":            msgID,
+			"instance_id":   inst.ID,
+			"instance_name": inst.Name,
+			"contact_id":    contactID,
+			"phone":         number,
+			"name":          number,
+			"direction":     "out",
+			"content":       content,
+			"type":          msgType,
+			"media_path":    webPath,
+			"media_name":    mediaName,
+			"created_at":    createdAt,
+		},
+	}
+	jsonBytes, _ := json.Marshal(payload)
+	hub.Global.Broadcast(jsonBytes)
+
+	c.JSON(http.StatusOK, gin.H{"ok": true, "id": msgID})
+
+	// Envia para o WhatsApp em background
+	go func() {
+		if err := service.SendMedia(inst, number, data, mimetype, filename, caption, isAudio); err != nil {
+			log.Printf("[SEND_MEDIA] Erro ao enviar para WhatsApp: %v", err)
+		}
+	}()
 }
 
 func TranscribeMessage(c *gin.Context) {

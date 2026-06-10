@@ -95,6 +95,7 @@ func main() {
 		apiGroup.GET("/conversations", handler.ListConversations)
 		apiGroup.GET("/conversations/:name/:phone/messages", handler.GetMessages)
 		apiGroup.POST("/conversations/:name/:phone/send", handler.SendFromUI)
+		apiGroup.POST("/conversations/:name/:phone/send-media", handler.SendMediaFromUI)
 		apiGroup.POST("/conversations/:name/:phone/read", handler.MarkAsRead)
 		apiGroup.POST("/messages/:id/transcribe", handler.TranscribeMessage)
 	}

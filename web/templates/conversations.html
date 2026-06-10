@@ -190,7 +190,55 @@ function conversationsPage() {
       yesterday.setDate(today.getDate() - 1);
       if (d.toDateString() === yesterday.toDateString()) return 'ontem';
       return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-    }
+    },
+
+    // ── Envio de mídia ──────────────────────────────────────
+    mediaFile: null,
+    mediaPreview: null,
+    mediaCaption: '',
+    sendingMedia: false,
+
+    onFileSelected(event) {
+      const f = event.target.files[0];
+      if (!f) return;
+      this.mediaFile = f;
+      const reader = new FileReader();
+      reader.onload = e => { this.mediaPreview = e.target.result; };
+      reader.readAsDataURL(f);
+    },
+
+    clearMedia() {
+      this.mediaFile = null;
+      this.mediaPreview = null;
+      this.mediaCaption = '';
+      const inp = document.getElementById('media-file-input');
+      if (inp) inp.value = '';
+    },
+
+    async sendMedia() {
+      if (!this.mediaFile || !this.activeConv) return;
+      this.sendingMedia = true;
+      const form = new FormData();
+      form.append('file', this.mediaFile);
+      if (this.mediaCaption) form.append('caption', this.mediaCaption);
+      try {
+        const r = await fetch(
+          `/api/conversations/${this.activeConv.instance_name}/${this.activeConv.phone}/send-media`,
+          { method: 'POST', headers: { 'Authorization': `Bearer ${TOKEN}` }, body: form }
+        );
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          alert('Erro ao enviar: ' + (err.error || r.status));
+        } else {
+          this.clearMedia();
+          this.$nextTick(() => this.scrollToBottom());
+        }
+      } catch(e) {
+        alert('Erro ao enviar: ' + e.message);
+      } finally {
+        this.sendingMedia = false;
+      }
+    },
   }
 }
 </script>
@@ -435,13 +483,60 @@ function conversationsPage() {
       </template>
     </div>
 
-    <div class="bg-white border-t border-gray-100 px-4 py-3 flex-shrink-0" style="padding-bottom:max(12px,env(safe-area-inset-bottom));">
+    <div class="bg-white border-t border-gray-100 flex-shrink-0" style="padding-bottom:max(12px,env(safe-area-inset-bottom));">
+
+      <!-- Preview de mídia selecionada -->
+      <div x-show="!!mediaFile" x-cloak class="px-4 pt-3 pb-2 border-b border-gray-100">
+        <div class="flex items-start gap-3">
+          <div class="relative flex-shrink-0">
+            <img x-show="mediaFile && mediaFile.type.startsWith('image/')"
+              :src="mediaPreview" class="w-20 h-20 object-cover rounded-lg border border-gray-200" />
+            <div x-show="mediaFile && !mediaFile.type.startsWith('image/')"
+              class="w-20 h-20 bg-gray-900 rounded-lg flex items-center justify-center">
+              <svg class="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            </div>
+            <button @click="clearMedia()"
+              class="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-700 rounded-full flex items-center justify-center text-white hover:bg-gray-900">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+          <div class="flex-1 min-w-0">
+            <p class="text-xs font-medium text-gray-700 truncate" x-text="mediaFile && mediaFile.name"></p>
+            <p class="text-[10px] text-gray-400 mb-2"
+              x-text="mediaFile ? (mediaFile.size > 1048576 ? (mediaFile.size/1048576).toFixed(1)+'MB' : (mediaFile.size/1024).toFixed(0)+'KB') : ''"></p>
+            <input x-model="mediaCaption" type="text" placeholder="Legenda (opcional)"
+              class="w-full text-sm bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+          </div>
+          <button @click="sendMedia()" :disabled="sendingMedia"
+            class="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all"
+            :class="sendingMedia ? 'bg-gray-200 text-gray-400' : 'bg-green-500 hover:bg-green-600 text-white shadow-sm'">
+            <svg x-show="!sendingMedia" class="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z"/>
+            </svg>
+            <svg x-show="sendingMedia" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
       <template x-if="activeConv">
-        <div class="flex items-end gap-2">
+        <div class="flex items-end gap-2 px-4 py-3">
+          <input id="media-file-input" type="file" accept="image/*,video/*" class="hidden" @change="onFileSelected($event)"/>
+          <button @click="document.getElementById('media-file-input').click()"
+            class="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center bg-gray-100 hover:bg-gray-200 text-gray-500 transition-colors">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
+            </svg>
+          </button>
           <textarea
             x-model="messageInput"
             @keydown.enter.prevent="!$event.shiftKey && sendMessage()"
-            placeholder="Digite uma mensagem... (Enter para enviar, Shift+Enter para quebrar linha)"
+            placeholder="Digite uma mensagem..."
             :disabled="sending"
             rows="1"
             @input="$el.style.height='auto'; $el.style.height=Math.min($el.scrollHeight,120)+'px'"
@@ -465,7 +560,7 @@ function conversationsPage() {
         </div>
       </template>
       <template x-if="!activeConv">
-        <p class="text-center text-xs text-gray-300 py-1 hidden sm:block">
+        <p class="text-center text-xs text-gray-300 py-3 hidden sm:block">
           Selecione uma conversa para responder
         </p>
       </template>

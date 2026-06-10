@@ -491,9 +491,22 @@ function conversationsPage() {
           <div class="relative flex-shrink-0">
             <img x-show="mediaFile && mediaFile.type.startsWith('image/')"
               :src="mediaPreview" class="w-20 h-20 object-cover rounded-lg border border-gray-200" />
-            <div x-show="mediaFile && !mediaFile.type.startsWith('image/')"
+            <div x-show="mediaFile && mediaFile.type.startsWith('video/')"
               class="w-20 h-20 bg-gray-900 rounded-lg flex items-center justify-center">
               <svg class="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            </div>
+            <div x-show="mediaFile && mediaFile.type.startsWith('audio/')"
+              class="w-20 h-20 bg-indigo-900 rounded-lg flex items-center justify-center">
+              <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z"/>
+              </svg>
+            </div>
+            <div x-show="mediaFile && !mediaFile.type.startsWith('image/') && !mediaFile.type.startsWith('video/') && !mediaFile.type.startsWith('audio/')"
+              class="w-20 h-20 bg-gray-700 rounded-lg flex items-center justify-center">
+              <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+              </svg>
             </div>
             <button @click="clearMedia()"
               class="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-700 rounded-full flex items-center justify-center text-white hover:bg-gray-900">
@@ -506,7 +519,12 @@ function conversationsPage() {
             <p class="text-xs font-medium text-gray-700 truncate" x-text="mediaFile && mediaFile.name"></p>
             <p class="text-[10px] text-gray-400 mb-2"
               x-text="mediaFile ? (mediaFile.size > 1048576 ? (mediaFile.size/1048576).toFixed(1)+'MB' : (mediaFile.size/1024).toFixed(0)+'KB') : ''"></p>
-            <input x-model="mediaCaption" type="text" placeholder="Legenda (opcional)"
+            <div x-show="mediaFile && mediaFile.type.startsWith('audio/')" class="mb-2">
+              <audio :src="mediaPreview" controls class="w-full h-8" style="min-width:160px"></audio>
+              <p class="text-[10px] text-indigo-600 mt-1">Será convertido para OGG/Opus automaticamente</p>
+            </div>
+            <input x-show="mediaFile && !mediaFile.type.startsWith('audio/')"
+              x-model="mediaCaption" type="text" placeholder="Legenda (opcional)"
               class="w-full text-sm bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"/>
           </div>
           <button @click="sendMedia()" :disabled="sendingMedia"
@@ -525,7 +543,7 @@ function conversationsPage() {
 
       <template x-if="activeConv">
         <div class="flex items-end gap-2 px-4 py-3">
-          <input id="media-file-input" type="file" accept="image/*,video/*" class="hidden" @change="onFileSelected($event)"/>
+          <input id="media-file-input" type="file" accept="image/*,video/*,audio/*" class="hidden" @change="onFileSelected($event)"/>
           <button @click="document.getElementById('media-file-input').click()"
             class="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center bg-gray-100 hover:bg-gray-200 text-gray-500 transition-colors">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

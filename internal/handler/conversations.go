@@ -168,6 +168,18 @@ func SendMediaFromUI(c *gin.Context) {
 		msgType = "document"
 	}
 
+	// Converte áudio para OGG/Opus (necessário para reprodução em iOS e Android)
+	if isAudio {
+		converted, err := service.ConvertToOpus(data)
+		if err != nil {
+			log.Printf("[SEND_MEDIA] Falha ao converter áudio para Opus: %v", err)
+		} else {
+			data = converted
+			mimetype = "audio/ogg; codecs=opus"
+			filename = strings.TrimSuffix(filename, filepath.Ext(filename)) + ".ogg"
+		}
+	}
+
 	number := strings.TrimPrefix(phone, "+")
 	number = strings.ReplaceAll(number, " ", "")
 

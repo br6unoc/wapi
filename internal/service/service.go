@@ -199,6 +199,46 @@ func GetGroups(inst *instance.Instance) ([]map[string]interface{}, error) {
 	return result, nil
 }
 
+// ConvertToOpus converte qualquer áudio para OGG/Opus (formato aceito pelo WhatsApp iOS e Android).
+func ConvertToOpus(data []byte) ([]byte, error) {
+	tmpIn, err := os.CreateTemp("", "audio-in-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(tmpIn.Name())
+	if _, err := tmpIn.Write(data); err != nil {
+		return nil, err
+	}
+	tmpIn.Close()
+
+	tmpOut, err := os.CreateTemp("", "audio-out-*.ogg")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(tmpOut.Name())
+	tmpOut.Close()
+
+	cmd := exec.Command("ffmpeg", "-y",
+		"-i", tmpIn.Name(),
+		"-c:a", "libopus",
+		"-b:a", "128k",
+		"-ar", "48000",
+		"-ac", "1",
+		"-f", "ogg",
+		tmpOut.Name(),
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("ffmpeg: %w — %s", err, string(out))
+	}
+
+	converted, err := os.ReadFile(tmpOut.Name())
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("[AUDIO] Converted to OGG/Opus: %d → %d bytes", len(data), len(converted))
+	return converted, nil
+}
+
 func compressVideo(data []byte) ([]byte, string, error) {
 	// Salvar vídeo temporário
 	tmpInput := fmt.Sprintf("/tmp/video_input_%d.mp4", time.Now().UnixNano())

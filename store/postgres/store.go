@@ -86,6 +86,11 @@ func Migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_messages_instance ON messages (instance_id, created_at DESC);
 
 	ALTER TABLE contacts ADD COLUMN IF NOT EXISTS unread_count INTEGER NOT NULL DEFAULT 0;
+
+	CREATE TABLE IF NOT EXISTS settings (
+		key VARCHAR(255) PRIMARY KEY,
+		value TEXT NOT NULL DEFAULT ''
+	);
 	`
 
 	_, err := DB.Exec(query)
@@ -98,4 +103,21 @@ func Migrate() error {
 	DB.Exec(`ALTER TABLE users ALTER COLUMN company_id DROP NOT NULL`)
 
 	return nil
+}
+
+func GetSetting(key string) (string, error) {
+	var value string
+	err := DB.QueryRow(`SELECT value FROM settings WHERE key = $1`, key).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return value, err
+}
+
+func SetSetting(key, value string) error {
+	_, err := DB.Exec(`
+		INSERT INTO settings (key, value) VALUES ($1, $2)
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+	`, key, value)
+	return err
 }

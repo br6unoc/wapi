@@ -109,6 +109,8 @@ func main() {
 	{
 		webGroup.GET("/connections", handler.WebConnections)
 		webGroup.GET("/conversations", handler.WebConversations)
+		webGroup.GET("/settings", handler.WebSettings)
+		webGroup.POST("/settings", handler.WebSettingsSave)
 	}
 
 	r.Static("/web", "./web")
@@ -208,11 +210,8 @@ func loadInstancesFromDB() error {
 							return
 						}
 					}
-					// Não reconectou em 60s: logout para notificar o celular
-					log.Printf("[STARTUP] Instância %s não reconectou em 60s, fazendo logout.", i.Name)
-					if i.WAClient != nil {
-						i.WAClient.Logout(context.Background())
-					}
+					// Sessão permanece válida — apenas marca desconectado, não faz logout
+					log.Printf("[STARTUP] Instância %s não reconectou em 60s, marcando desconectado.", i.Name)
 					i.Status = "disconnected"
 					i.Phone = ""
 					i.SaveStatusToDB()

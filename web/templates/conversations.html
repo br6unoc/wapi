@@ -19,6 +19,7 @@ function conversationsPage() {
   return {
     conversations: [],
     activeConv: null,
+    selectedAgentMode: true,
     messages: [],
     messageInput: '',
     sending: false,
@@ -53,6 +54,7 @@ function conversationsPage() {
 
     async selectConv(conv) {
       this.activeConv = conv;
+      this.selectedAgentMode = conv.agent_mode ?? true;
       this.mobilePanel = 'thread';
       this.messages = [];
       conv.unread_count = 0;
@@ -90,6 +92,16 @@ function conversationsPage() {
       ws.onmessage = (e) => {
         let msg; try { msg = JSON.parse(e.data); } catch { return; }
         if (msg.event === 'ping') return;
+        if (msg.event === 'agent_mode_changed') {
+          const data = msg.data;
+          const conv = this.conversations.find(c => c.contact_id === data.contact_id);
+          if (conv) conv.agent_mode = data.agent_mode;
+          if (this.activeConv && this.activeConv.contact_id === data.contact_id) {
+            this.activeConv.agent_mode = data.agent_mode;
+            this.selectedAgentMode = data.agent_mode;
+          }
+          return;
+        }
         if (msg.event !== 'new_message') return;
         const d = msg.data;
         const idx = this.conversations.findIndex(c =>
@@ -359,6 +371,30 @@ function conversationsPage() {
       }
       this.recordedChunks = [];
     },
+
+    async takeover() {
+      if (!this.activeConv) return;
+      const r = await fetch(`/api/conversations/${this.activeConv.instance_name}/${this.activeConv.phone}/takeover`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${TOKEN}` }
+      });
+      if (r.ok) {
+        this.selectedAgentMode = false;
+        if (this.activeConv) this.activeConv.agent_mode = false;
+      }
+    },
+
+    async resumeAgent() {
+      if (!this.activeConv) return;
+      const r = await fetch(`/api/conversations/${this.activeConv.instance_name}/${this.activeConv.phone}/resume`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${TOKEN}` }
+      });
+      if (r.ok) {
+        this.selectedAgentMode = true;
+        if (this.activeConv) this.activeConv.agent_mode = true;
+      }
+    },
   }
 }
 </script>
@@ -472,6 +508,21 @@ function conversationsPage() {
               <span class="mx-1">·</span>
               <span x-text="activeConv.instance_name"></span>
             </p>
+          </div>
+          <!-- Agent status badge + buttons -->
+          <div class="flex items-center gap-2 ml-auto flex-shrink-0">
+            <span x-show="selectedAgentMode"
+              class="text-xs bg-green-100 text-green-700 border border-green-200 px-2 py-0.5 rounded-full font-medium">
+              Agente ativo
+            </span>
+            <button x-show="selectedAgentMode" @click="takeover()"
+              class="text-xs border border-amber-200 text-amber-600 rounded-lg px-3 py-1 hover:bg-amber-50 transition-colors font-medium">
+              Assumir conversa
+            </button>
+            <button x-show="!selectedAgentMode" @click="resumeAgent()"
+              class="text-xs border border-blue-200 text-blue-600 rounded-lg px-3 py-1 hover:bg-blue-50 transition-colors font-medium">
+              Retornar ao agente
+            </button>
           </div>
         </div>
       </template>

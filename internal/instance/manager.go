@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 	"botwapp/internal/hub"
-	"botwapp/internal/transcriber"
 	"botwapp/internal/whatsapp"
 	"botwapp/store/postgres"
 
@@ -163,29 +163,41 @@ func (inst *Instance) Connect() error {
 	inst.WAClient.AddEventHandler(inst.handleEvent)
 
 	if inst.WAClient.Store.ID == nil {
-		qrChan, _ := inst.WAClient.GetQRChannel(inst.ctx)
-		go func() {
-			for {
-				select {
-				case <-inst.ctx.Done():
-					return
-				case evt, ok := <-qrChan:
-					if !ok {
+		qrChan, err := inst.WAClient.GetQRChannel(inst.ctx)
+		if err != nil {
+			log.Printf("[QR] Instance %s GetQRChannel error: %v", inst.Name, err)
+		} else {
+			go func() {
+				for {
+					select {
+					case <-inst.ctx.Done():
 						return
-					}
-					if evt.Event == "code" {
-						inst.LastQR = evt.Code
-						log.Printf("[QR] Instance %s got QR code (len=%d)", inst.Name, len(evt.Code))
-						dataURL := QRToDataURL(evt.Code)
-						payload, _ := json.Marshal(map[string]interface{}{
-							"event": "qr",
-							"data":  map[string]string{"qrcode": dataURL},
-						})
-						inst.BroadcastSSE(string(payload))
+					case evt, ok := <-qrChan:
+						if !ok {
+							log.Printf("[QR] Instance %s QR channel closed", inst.Name)
+							return
+						}
+						switch evt.Event {
+						case "code":
+							inst.LastQR = evt.Code
+							log.Printf("[QR] Instance %s got QR code (len=%d)", inst.Name, len(evt.Code))
+							dataURL := QRToDataURL(evt.Code)
+							payload, _ := json.Marshal(map[string]interface{}{
+								"event": "qr",
+								"data":  map[string]string{"qrcode": dataURL},
+							})
+							inst.BroadcastSSE(string(payload))
+						case "success":
+							log.Printf("[QR] Instance %s QR scanned successfully, waiting for Connected event", inst.Name)
+						case "timeout":
+							log.Printf("[QR] Instance %s QR timeout", inst.Name)
+						default:
+							log.Printf("[QR] Instance %s QR event: %s (err: %v)", inst.Name, evt.Event, evt.Error)
+						}
 					}
 				}
-			}
-		}()
+			}()
+		}
 	}
 
 	err = inst.WAClient.Connect()
@@ -222,6 +234,30 @@ func (inst *Instance) Disconnect() {
 	inst.saveStatusToDB()
 }
 
+func (inst *Instance) autoReconnect() {
+	for attempt := 1; attempt <= 3; attempt++ {
+		select {
+		case <-inst.ctx.Done():
+			return
+		case <-time.After(time.Duration(attempt*30) * time.Second):
+		}
+		if inst.Status == "connected" {
+			return
+		}
+		log.Printf("[RECONNECT] Tentativa %d/3 para instância %s", attempt, inst.Name)
+		if err := inst.Connect(); err != nil {
+			log.Printf("[RECONNECT] Erro na tentativa %d para %s: %v", attempt, inst.Name, err)
+			continue
+		}
+		time.Sleep(5 * time.Second)
+		if inst.Status == "connected" {
+			log.Printf("[RECONNECT] Instância %s reconectada na tentativa %d", inst.Name, attempt)
+			return
+		}
+	}
+	log.Printf("[RECONNECT] Instância %s não reconectou após 3 tentativas", inst.Name)
+}
+
 func (inst *Instance) keepAlive() {
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
@@ -244,10 +280,11 @@ func (inst *Instance) keepAlive() {
 				if inst.Status == "connected" {
 					inst.Status = "disconnected"
 					inst.Phone = ""
-					log.Printf("[KEEPALIVE] Instance %s disconnected", inst.Name)
+					log.Printf("[KEEPALIVE] Instance %s disconnected, iniciando auto-reconexão...", inst.Name)
 					p, _ := json.Marshal(map[string]interface{}{"event": "disconnected", "data": map[string]interface{}{}})
 					inst.BroadcastSSE(string(p))
 					inst.saveStatusToDB()
+					go inst.autoReconnect()
 				}
 			}
 		}
@@ -271,6 +308,14 @@ func (inst *Instance) handleEvent(evt interface{}) {
 		log.Printf("[EVENT] Instance %s Disconnected", inst.Name)
 		inst.BroadcastSSE(`{"event":"disconnected","data":{}}`)
 		inst.saveStatusToDB()
+	case *events.LoggedOut:
+		log.Printf("[EVENT] Instance %s LoggedOut — removido pelo celular/app", inst.Name)
+		inst.Status = "disconnected"
+		inst.Phone = ""
+		inst.LastQR = ""
+		inst.BroadcastSSE(`{"event":"disconnected","data":{"reason":"logged_out"}}`)
+		inst.saveStatusToDB()
+		os.Remove(fmt.Sprintf("/app/sessions/%s.db", inst.ID))
 	case *events.Message:
 		if v.Info.IsFromMe {
 			return
@@ -330,32 +375,47 @@ func (inst *Instance) processMessage(v *events.Message) {
 	} else if v.Message.GetAudioMessage() != nil {
 		msgData["message"] = "[áudio]"
 		msgData["type"] = "audio"
-		go inst.processAudio(v, msgData)
-		if !isGroup {
-			go inst.saveMessage(senderNumber, v.Info.PushName, "[áudio]", "audio", v.Info.ID, "in")
-		}
+		go inst.processAudio(v, senderNumber, isGroup, msgData)
 		return
 	}
 
 	if !isGroup {
-		go inst.saveMessage(senderNumber, v.Info.PushName, content, msgTypeStr, v.Info.ID, "in")
+		go inst.saveMessage(senderNumber, v.Info.PushName, content, msgTypeStr, v.Info.ID, "in", "")
 	}
 
 	inst.broadcastMessage(msgData)
 	go inst.sendWebhook(msgData)
 }
 
-func (inst *Instance) processAudio(v *events.Message, msgData map[string]interface{}) {
+func (inst *Instance) processAudio(v *events.Message, senderNumber string, isGroup bool, msgData map[string]interface{}) {
 	audioMsg := v.Message.GetAudioMessage()
 	audioData, err := inst.WAClient.Download(context.Background(), audioMsg)
 	if err != nil {
+		log.Printf("[AUDIO] Erro ao baixar áudio: %v", err)
+		if !isGroup {
+			go inst.saveMessage(senderNumber, v.Info.PushName, "[áudio]", "audio", v.Info.ID, "in", "")
+		}
 		inst.broadcastMessage(msgData)
 		go inst.sendWebhook(msgData)
 		return
 	}
-	if inst.TranscriptionEnabled {
-		text, _ := transcriber.Transcribe(audioData, "audio.ogg")
-		msgData["transcription"] = text
+
+	// Salva o arquivo de áudio em disco
+	mediaDir := "/app/media/audio"
+	os.MkdirAll(mediaDir, 0755)
+	mediaPath := fmt.Sprintf("%s/%s.ogg", mediaDir, v.Info.ID)
+	if err := os.WriteFile(mediaPath, audioData, 0644); err != nil {
+		log.Printf("[AUDIO] Erro ao salvar arquivo: %v", err)
+		mediaPath = ""
+	}
+	webPath := ""
+	if mediaPath != "" {
+		webPath = fmt.Sprintf("/media/audio/%s.ogg", v.Info.ID)
+		msgData["media_path"] = webPath
+	}
+
+	if !isGroup {
+		go inst.saveMessage(senderNumber, v.Info.PushName, "[áudio]", "audio", v.Info.ID, "in", webPath)
 	}
 	inst.broadcastMessage(msgData)
 	go inst.sendWebhook(msgData)
@@ -405,7 +465,7 @@ func (inst *Instance) RemoveSSEClient(ch chan string) {
 }
 
 // saveMessage persiste a mensagem no banco e faz broadcast via WebSocket.
-func (inst *Instance) saveMessage(phone, pushName, content, msgType, waID, direction string) {
+func (inst *Instance) saveMessage(phone, pushName, content, msgType, waID, direction, mediaPath string) {
 	var contactID string
 	err := postgres.DB.QueryRow(
 		`INSERT INTO contacts (instance_id, phone, name)
@@ -422,10 +482,10 @@ func (inst *Instance) saveMessage(phone, pushName, content, msgType, waID, direc
 	msgID := uuid.New().String()
 	var createdAt string
 	err = postgres.DB.QueryRow(
-		`INSERT INTO messages (id, instance_id, contact_id, direction, content, type, wa_message_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`INSERT INTO messages (id, instance_id, contact_id, direction, content, type, wa_message_id, media_path)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 RETURNING created_at`,
-		msgID, inst.ID, contactID, direction, content, msgType, waID,
+		msgID, inst.ID, contactID, direction, content, msgType, waID, mediaPath,
 	).Scan(&createdAt)
 	if err != nil {
 		log.Printf("[DB] Erro ao salvar mensagem: %v", err)
@@ -451,10 +511,12 @@ func (inst *Instance) saveMessage(phone, pushName, content, msgType, waID, direc
 			"direction":     direction,
 			"content":       content,
 			"type":          msgType,
+			"media_path":    mediaPath,
 			"created_at":    createdAt,
 		},
 	}
 	jsonBytes, _ := json.Marshal(payload)
+	log.Printf("[WS] broadcast new_message in → %d clientes", hub.Global.Count())
 	hub.Global.Broadcast(jsonBytes)
 }
 

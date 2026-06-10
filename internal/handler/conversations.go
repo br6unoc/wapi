@@ -4,10 +4,13 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"strings"
+
 	"botwapp/internal/hub"
 	"botwapp/internal/instance"
 	"botwapp/internal/service"
+	"botwapp/internal/transcriber"
 	"botwapp/store/postgres"
 
 	"github.com/gin-gonic/gin"
@@ -80,7 +83,7 @@ func GetMessages(c *gin.Context) {
 	phone := c.Param("phone")
 
 	rows, err := postgres.DB.Query(`
-		SELECT m.id, m.direction, m.content, m.type, m.created_at
+		SELECT m.id, m.direction, m.content, m.type, m.media_path, m.created_at
 		FROM messages m
 		JOIN contacts c ON c.id = m.contact_id
 		JOIN instances i ON i.id = m.instance_id
@@ -99,18 +102,49 @@ func GetMessages(c *gin.Context) {
 		Direction string `json:"direction"`
 		Content   string `json:"content"`
 		Type      string `json:"type"`
+		MediaPath string `json:"media_path"`
 		CreatedAt string `json:"created_at"`
 	}
 
 	msgs := make([]Msg, 0)
 	for rows.Next() {
 		var msg Msg
-		if err := rows.Scan(&msg.ID, &msg.Direction, &msg.Content, &msg.Type, &msg.CreatedAt); err != nil {
+		if err := rows.Scan(&msg.ID, &msg.Direction, &msg.Content, &msg.Type, &msg.MediaPath, &msg.CreatedAt); err != nil {
 			continue
 		}
 		msgs = append(msgs, msg)
 	}
 	c.JSON(http.StatusOK, msgs)
+}
+
+func TranscribeMessage(c *gin.Context) {
+	msgID := c.Param("id")
+
+	mediaPath, err := postgres.GetMessageMediaPath(msgID)
+	if err != nil || mediaPath == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "arquivo de áudio não encontrado"})
+		return
+	}
+
+	// mediaPath is like /media/audio/<id>.ogg — map to filesystem
+	fsPath := "/app" + mediaPath
+	audioData, err := os.ReadFile(fsPath)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "arquivo de áudio não encontrado no disco"})
+		return
+	}
+
+	text, err := transcriber.Transcribe(audioData, "audio.ogg")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "erro na transcrição: " + err.Error()})
+		return
+	}
+
+	if err := postgres.UpdateMessageContent(msgID, text); err != nil {
+		log.Printf("[TRANSCRIBE] Erro ao atualizar mensagem %s: %v", msgID, err)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"text": text})
 }
 
 // MarkAsRead zera o unread_count do contato quando o atendente abre a conversa.
@@ -152,52 +186,60 @@ func SendFromUI(c *gin.Context) {
 	number := strings.TrimPrefix(phone, "+")
 	number = strings.ReplaceAll(number, " ", "")
 
-	if err := service.SendText(inst, number, req.Message); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	// Salva no DB imediatamente (sem esperar o WhatsApp)
+	var contactID string
+	if err := postgres.DB.QueryRow(
+		`INSERT INTO contacts (instance_id, phone, name)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (instance_id, phone) DO UPDATE SET name = EXCLUDED.name
+		 RETURNING id`,
+		inst.ID, number, number,
+	).Scan(&contactID); err != nil {
+		log.Printf("[DB] Erro ao upsert contact (sendUI): %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "erro ao salvar contato"})
 		return
 	}
 
-	go func(instID, instName, phoneNum, message string) {
-		var contactID string
-		if err := postgres.DB.QueryRow(
-			`INSERT INTO contacts (instance_id, phone, name)
-			 VALUES ($1, $2, $3)
-			 ON CONFLICT (instance_id, phone) DO UPDATE SET name = EXCLUDED.name
-			 RETURNING id`,
-			instID, phoneNum, phoneNum,
-		).Scan(&contactID); err != nil {
-			log.Printf("[DB] Erro ao upsert contact (sendUI): %v", err)
-			return
-		}
-		msgID := uuid.New().String()
-		var createdAt string
-		if err := postgres.DB.QueryRow(
-			`INSERT INTO messages (id, instance_id, contact_id, direction, content, type)
-			 VALUES ($1, $2, $3, 'out', $4, 'text')
-			 RETURNING created_at`,
-			msgID, instID, contactID, message,
-		).Scan(&createdAt); err != nil {
-			log.Printf("[DB] Erro ao salvar msg enviada: %v", err)
-			return
-		}
-		payload := map[string]interface{}{
-			"event": "new_message",
-			"data": map[string]interface{}{
-				"id":            msgID,
-				"instance_id":   instID,
-				"instance_name": instName,
-				"contact_id":    contactID,
-				"phone":         phoneNum,
-				"name":          phoneNum,
-				"direction":     "out",
-				"content":       message,
-				"type":          "text",
-				"created_at":    createdAt,
-			},
-		}
-		jsonBytes, _ := json.Marshal(payload)
-		hub.Global.Broadcast(jsonBytes)
-	}(inst.ID, inst.Name, number, req.Message)
+	msgID := uuid.New().String()
+	var createdAt string
+	if err := postgres.DB.QueryRow(
+		`INSERT INTO messages (id, instance_id, contact_id, direction, content, type)
+		 VALUES ($1, $2, $3, 'out', $4, 'text')
+		 RETURNING created_at`,
+		msgID, inst.ID, contactID, req.Message,
+	).Scan(&createdAt); err != nil {
+		log.Printf("[DB] Erro ao salvar msg enviada: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "erro ao salvar mensagem"})
+		return
+	}
 
+	// Broadcast via WS antes de retornar
+	payload := map[string]interface{}{
+		"event": "new_message",
+		"data": map[string]interface{}{
+			"id":            msgID,
+			"instance_id":   inst.ID,
+			"instance_name": inst.Name,
+			"contact_id":    contactID,
+			"phone":         number,
+			"name":          number,
+			"direction":     "out",
+			"content":       req.Message,
+			"type":          "text",
+			"created_at":    createdAt,
+		},
+	}
+	jsonBytes, _ := json.Marshal(payload)
+	log.Printf("[WS] broadcast new_message out → %d clientes", hub.Global.Count())
+	hub.Global.Broadcast(jsonBytes)
+
+	// Retorna imediatamente — sem travar o frontend
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+
+	// Envia para o WhatsApp em background com indicador de digitação
+	go func() {
+		if err := service.SendText(inst, number, req.Message); err != nil {
+			log.Printf("[SEND] Erro ao enviar para WhatsApp: %v", err)
+		}
+	}()
 }

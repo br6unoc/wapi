@@ -86,6 +86,7 @@ func Migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_messages_instance ON messages (instance_id, created_at DESC);
 
 	ALTER TABLE contacts ADD COLUMN IF NOT EXISTS unread_count INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_path TEXT NOT NULL DEFAULT '';
 
 	CREATE TABLE IF NOT EXISTS settings (
 		key VARCHAR(255) PRIMARY KEY,
@@ -103,6 +104,20 @@ func Migrate() error {
 	DB.Exec(`ALTER TABLE users ALTER COLUMN company_id DROP NOT NULL`)
 
 	return nil
+}
+
+func GetMessageMediaPath(msgID string) (string, error) {
+	var path string
+	err := DB.QueryRow(`SELECT media_path FROM messages WHERE id = $1`, msgID).Scan(&path)
+	if err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func UpdateMessageContent(msgID, content string) error {
+	_, err := DB.Exec(`UPDATE messages SET content = $1 WHERE id = $2`, content, msgID)
+	return err
 }
 
 func GetSetting(key string) (string, error) {

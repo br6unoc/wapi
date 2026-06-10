@@ -114,6 +114,7 @@ func SendMedia(inst *instance.Instance, to string, data []byte, mimetype, filena
 
 	if isAudio {
 		secs := getAudioDurationSeconds(data)
+		waveform := generateWaveform(data)
 		msg = &waProto.Message{
 			AudioMessage: &waProto.AudioMessage{
 				URL:           proto.String(uploaded.URL),
@@ -125,6 +126,7 @@ func SendMedia(inst *instance.Instance, to string, data []byte, mimetype, filena
 				Mimetype:      proto.String("audio/ogg; codecs=opus"),
 				Seconds:       proto.Uint32(secs),
 				PTT:           proto.Bool(true),
+				Waveform:      waveform,
 			},
 		}
 	} else if strings.HasPrefix(mimetype, "image/") {
@@ -223,6 +225,85 @@ func getAudioDurationSeconds(data []byte) uint32 {
 	var secs float64
 	fmt.Sscanf(strings.TrimSpace(string(out)), "%f", &secs)
 	return uint32(secs)
+}
+
+// generateWaveform gera 64 amostras de amplitude (0-255) para o campo Waveform do WhatsApp.
+func generateWaveform(data []byte) []byte {
+	const samples = 64
+
+	tmp, err := os.CreateTemp("", "wf-in-*.ogg")
+	if err != nil {
+		return make([]byte, samples)
+	}
+	defer os.Remove(tmp.Name())
+	tmp.Write(data)
+	tmp.Close()
+
+	// Extrai PCM 16-bit mono 8kHz como raw bytes
+	tmpPCM, err := os.CreateTemp("", "wf-pcm-*.raw")
+	if err != nil {
+		return make([]byte, samples)
+	}
+	defer os.Remove(tmpPCM.Name())
+	tmpPCM.Close()
+
+	err = exec.Command("ffmpeg", "-y",
+		"-i", tmp.Name(),
+		"-f", "s16le", "-ac", "1", "-ar", "8000",
+		tmpPCM.Name(),
+	).Run()
+	if err != nil {
+		return make([]byte, samples)
+	}
+
+	pcm, err := os.ReadFile(tmpPCM.Name())
+	if err != nil || len(pcm) < 2 {
+		return make([]byte, samples)
+	}
+
+	// Calcula RMS por segmento
+	totalFrames := len(pcm) / 2
+	segSize := totalFrames / samples
+	if segSize < 1 {
+		segSize = 1
+	}
+
+	waveform := make([]byte, samples)
+	var maxRMS float64
+
+	rmsValues := make([]float64, samples)
+	for i := 0; i < samples; i++ {
+		start := i * segSize * 2
+		end := start + segSize*2
+		if end > len(pcm) {
+			end = len(pcm)
+		}
+		if start >= end {
+			break
+		}
+		var sumSq float64
+		count := 0
+		for j := start; j+1 < end; j += 2 {
+			sample := float64(int16(uint16(pcm[j]) | uint16(pcm[j+1])<<8))
+			sumSq += sample * sample
+			count++
+		}
+		if count > 0 {
+			rms := sumSq / float64(count)
+			rmsValues[i] = rms
+			if rms > maxRMS {
+				maxRMS = rms
+			}
+		}
+	}
+
+	if maxRMS > 0 {
+		for i, rms := range rmsValues {
+			waveform[i] = byte(rms / maxRMS * 255)
+		}
+	}
+
+	return waveform
 }
 
 // ConvertToOpus converte qualquer áudio para OGG/Opus (formato aceito pelo WhatsApp iOS e Android).

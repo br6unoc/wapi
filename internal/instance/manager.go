@@ -347,6 +347,11 @@ func (inst *Instance) handleEvent(evt interface{}) {
 }
 
 func (inst *Instance) processMessage(v *events.Message) {
+	// Ignorar status/stories do WhatsApp (status@broadcast)
+	if v.Info.Chat.Server == "broadcast" || v.Info.Chat.User == "status" {
+		return
+	}
+
 	isGroup := v.Info.Chat.Server == "g.us"
 	remoteJID := v.Info.Chat.User
 

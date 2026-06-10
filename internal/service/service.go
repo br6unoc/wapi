@@ -122,7 +122,7 @@ func SendMedia(inst *instance.Instance, to string, data []byte, mimetype, filena
 				FileSHA256:    uploaded.FileSHA256,
 				FileLength:    &uploaded.FileLength,
 				Mimetype:      proto.String("audio/ogg; codecs=opus"),
-				PTT:           proto.Bool(true),
+				PTT:           proto.Bool(false),
 			},
 		}
 	} else if strings.HasPrefix(mimetype, "image/") {
@@ -221,8 +221,8 @@ func ConvertToOpus(data []byte) ([]byte, error) {
 	cmd := exec.Command("ffmpeg", "-y",
 		"-i", tmpIn.Name(),
 		"-c:a", "libopus",
-		"-b:a", "128k",
-		"-ar", "48000",
+		"-b:a", "32k",
+		"-ar", "16000",
 		"-ac", "1",
 		"-f", "ogg",
 		tmpOut.Name(),

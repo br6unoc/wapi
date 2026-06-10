@@ -9,7 +9,7 @@ import (
         "os"
         "os/exec"
 	"time"
-	"wapi/internal/instance"
+	"botwapp/internal/instance"
 
 	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/proto/waE2E"
@@ -90,22 +90,25 @@ func SendMedia(inst *instance.Instance, to string, data []byte, mimetype, filena
 			log.Printf("[CONVERT] Success")
 		}
         }
-        time.Sleep(time.Duration(delay) * time.Millisecond)
-        uploaded, err := inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaImage)
-        if isAudio {
-                uploaded, err = inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaAudio)
-        } else if mimetype == "image/jpeg" || mimetype == "image/png" || mimetype == "image/webp" {
-                uploaded, err = inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaImage)
-        } else if strings.HasPrefix(mimetype, "video/") {
-                uploaded, err = inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaVideo)
-        } else {
-                uploaded, err = inst.WAClient.Upload(context.Background(), data, whatsmeow.MediaDocument)
-        }
+	time.Sleep(time.Duration(delay) * time.Millisecond)
 
+	var uploadType whatsmeow.MediaType
+	if isAudio {
+		uploadType = whatsmeow.MediaAudio
+	} else if strings.HasPrefix(mimetype, "image/") {
+		uploadType = whatsmeow.MediaImage
+	} else if strings.HasPrefix(mimetype, "video/") {
+		uploadType = whatsmeow.MediaVideo
+	} else {
+		uploadType = whatsmeow.MediaDocument
+	}
+
+	uploaded, err := inst.WAClient.Upload(context.Background(), data, uploadType)
 	if err != nil {
-        log.Printf("[ERROR] Upload failed - mimetype: %s, isAudio: %v, error: %v", mimetype, isAudio, err)
+		log.Printf("[ERROR] Upload failed - mimetype: %s, isAudio: %v, error: %v", mimetype, isAudio, err)
 		return fmt.Errorf("erro ao fazer upload: %w", err)
 	}
+	log.Printf("[UPLOAD] OK - mimetype: %s, type: %v, size: %d", mimetype, uploadType, len(data))
 
 	var msg *waProto.Message
 
@@ -117,12 +120,12 @@ func SendMedia(inst *instance.Instance, to string, data []byte, mimetype, filena
 				MediaKey:      uploaded.MediaKey,
 				FileEncSHA256: uploaded.FileEncSHA256,
 				FileSHA256:    uploaded.FileSHA256,
-				FileLength:    proto.Uint64(uint64(len(data))),
+				FileLength:    &uploaded.FileLength,
 				Mimetype:      proto.String("audio/ogg; codecs=opus"),
 				PTT:           proto.Bool(true),
 			},
 		}
-	} else if mimetype == "image/jpeg" || mimetype == "image/png" || mimetype == "image/webp" {
+	} else if strings.HasPrefix(mimetype, "image/") {
 		msg = &waProto.Message{
 			ImageMessage: &waProto.ImageMessage{
 				URL:           proto.String(uploaded.URL),
@@ -130,7 +133,7 @@ func SendMedia(inst *instance.Instance, to string, data []byte, mimetype, filena
 				MediaKey:      uploaded.MediaKey,
 				FileEncSHA256: uploaded.FileEncSHA256,
 				FileSHA256:    uploaded.FileSHA256,
-				FileLength:    proto.Uint64(uint64(len(data))),
+				FileLength:    &uploaded.FileLength,
 				Mimetype:      proto.String(mimetype),
 				Caption:       proto.String(caption),
 			},
@@ -143,7 +146,7 @@ func SendMedia(inst *instance.Instance, to string, data []byte, mimetype, filena
 				MediaKey:      uploaded.MediaKey,
 				FileEncSHA256: uploaded.FileEncSHA256,
 				FileSHA256:    uploaded.FileSHA256,
-				FileLength:    proto.Uint64(uint64(len(data))),
+				FileLength:    &uploaded.FileLength,
 				Mimetype:      proto.String(mimetype),
 				Caption:       proto.String(caption),
 			},
@@ -156,7 +159,7 @@ func SendMedia(inst *instance.Instance, to string, data []byte, mimetype, filena
 				MediaKey:      uploaded.MediaKey,
 				FileEncSHA256: uploaded.FileEncSHA256,
 				FileSHA256:    uploaded.FileSHA256,
-				FileLength:    proto.Uint64(uint64(len(data))),
+				FileLength:    &uploaded.FileLength,
 				Mimetype:      proto.String(mimetype),
 				FileName:      proto.String(filename),
 				Caption:       proto.String(caption),

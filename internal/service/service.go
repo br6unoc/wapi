@@ -307,6 +307,8 @@ func generateWaveform(data []byte) []byte {
 }
 
 // ConvertToOpus converte qualquer áudio para OGG/Opus (formato aceito pelo WhatsApp iOS e Android).
+// Usa conversão em dois passos (entrada → PCM WAV → OGG/Opus) para garantir granule positions
+// corretas conforme RFC 7845, evitando rejeição pelo WhatsApp quando o input é MP4/AAC (iOS).
 func ConvertToOpus(data []byte) ([]byte, error) {
 	tmpIn, err := os.CreateTemp("", "audio-in-*")
 	if err != nil {
@@ -318,6 +320,25 @@ func ConvertToOpus(data []byte) ([]byte, error) {
 	}
 	tmpIn.Close()
 
+	// Passo 1: converter para PCM WAV (normaliza qualquer formato de entrada)
+	tmpWAV, err := os.CreateTemp("", "audio-mid-*.wav")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(tmpWAV.Name())
+	tmpWAV.Close()
+
+	if out, err := exec.Command("ffmpeg", "-y",
+		"-i", tmpIn.Name(),
+		"-ar", "48000",
+		"-ac", "1",
+		"-f", "wav",
+		tmpWAV.Name(),
+	).CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("ffmpeg step1: %w — %s", err, string(out))
+	}
+
+	// Passo 2: WAV → OGG/Opus (garante granule positions corretas)
 	tmpOut, err := os.CreateTemp("", "audio-out-*.ogg")
 	if err != nil {
 		return nil, err
@@ -325,17 +346,16 @@ func ConvertToOpus(data []byte) ([]byte, error) {
 	defer os.Remove(tmpOut.Name())
 	tmpOut.Close()
 
-	cmd := exec.Command("ffmpeg", "-y",
-		"-i", tmpIn.Name(),
+	if out, err := exec.Command("ffmpeg", "-y",
+		"-i", tmpWAV.Name(),
 		"-c:a", "libopus",
 		"-b:a", "64k",
 		"-ar", "48000",
 		"-ac", "1",
 		"-f", "ogg",
 		tmpOut.Name(),
-	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("ffmpeg: %w — %s", err, string(out))
+	).CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("ffmpeg step2: %w — %s", err, string(out))
 	}
 
 	converted, err := os.ReadFile(tmpOut.Name())

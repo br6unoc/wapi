@@ -1,0 +1,398 @@
+{{ template "layout.html" . }}
+{{ define "title" }}API — BotWapp{{ end }}
+{{ define "content" }}
+
+<script>
+const TOKEN = document.querySelector('meta[name="auth-token"]')?.content || '';
+const BASE = window.location.origin;
+const INSTANCES = [{{ range .Instances }}{ name: "{{ .Name }}", apiKey: "{{ .APIKey }}", status: "{{ .Status }}" },{{ end }}];
+
+function apiPage() {
+  const inst = INSTANCES[0] || { name: 'nome-da-conexao', apiKey: 'sua-api-key', status: '' };
+
+  return {
+    tab: 'docs',
+    copyDone: '',
+
+    // Test tab
+    instances: INSTANCES,
+    testInst: inst.name,
+    testApiKey: inst.apiKey,
+    testPhone: '',
+    testMessage: '',
+    testLoading: false,
+    testResult: null,
+    testStatus: '',
+
+    copyCode(id) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      navigator.clipboard.writeText(el.textContent.trim()).then(() => {
+        this.copyDone = id;
+        setTimeout(() => this.copyDone = '', 1500);
+      });
+    },
+
+    onInstChange() {
+      const found = this.instances.find(i => i.name === this.testInst);
+      this.testApiKey = found ? found.apiKey : '';
+    },
+
+    async sendTest() {
+      if (!this.testInst || !this.testPhone || !this.testMessage) return;
+      this.testLoading = true;
+      this.testResult = null;
+      this.testStatus = '';
+      try {
+        const r = await fetch(`${BASE}/instances/${this.testInst}/send/text`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': this.testApiKey,
+          },
+          body: JSON.stringify({ number: this.testPhone, message: this.testMessage })
+        });
+        const data = await r.json();
+        this.testStatus = r.ok ? 'ok' : 'error';
+        this.testResult = JSON.stringify(data, null, 2);
+      } catch(e) {
+        this.testStatus = 'error';
+        this.testResult = e.message;
+      } finally {
+        this.testLoading = false;
+      }
+    }
+  };
+}
+</script>
+
+<div x-data="apiPage()" class="overflow-auto h-full">
+<div class="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+
+  <!-- Header -->
+  <div class="mb-6">
+    <h1 class="text-xl font-semibold text-gray-900">API</h1>
+    <p class="text-sm text-gray-500 mt-0.5">Integre o BotWapp com seus sistemas externos</p>
+  </div>
+
+  <!-- Tabs -->
+  <div class="flex gap-1 mb-6 bg-gray-100 p-1 rounded-xl w-fit">
+    <button @click="tab = 'docs'"
+      class="px-4 py-1.5 rounded-lg text-sm font-medium transition-all"
+      :class="tab === 'docs' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'">
+      Documentação
+    </button>
+    <button @click="tab = 'test'"
+      class="px-4 py-1.5 rounded-lg text-sm font-medium transition-all"
+      :class="tab === 'test' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'">
+      Testar
+    </button>
+  </div>
+
+  <!-- ===== DOCUMENTAÇÃO ===== -->
+  <div x-show="tab === 'docs'" class="space-y-6">
+
+    <!-- Autenticação -->
+    <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div class="px-5 py-4 border-b border-gray-100">
+        <h2 class="text-sm font-semibold text-gray-800">Autenticação</h2>
+      </div>
+      <div class="px-5 py-4 text-sm text-gray-600 space-y-2">
+        <p>Os endpoints de envio usam <strong>API Key</strong> no header <code class="bg-gray-100 rounded px-1.5 py-0.5 text-xs font-mono">apikey</code>.</p>
+        <p>Cada conexão tem sua própria API Key, disponível na aba <strong>Testar</strong> ou via <code class="bg-gray-100 rounded px-1.5 py-0.5 text-xs font-mono">GET /instances/:nome</code>.</p>
+        <p class="text-xs text-gray-400">URL base: <code class="bg-gray-100 rounded px-1.5 py-0.5 font-mono" x-text="BASE"></code></p>
+      </div>
+    </div>
+
+    <!-- Enviar mensagem de texto -->
+    <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div class="px-5 py-4 border-b border-gray-100 flex items-center gap-3">
+        <span class="bg-green-100 text-green-700 text-xs font-bold px-2 py-0.5 rounded font-mono">POST</span>
+        <code class="text-sm font-mono text-gray-700">/instances/:nome/send/text</code>
+      </div>
+      <div class="px-5 py-4 space-y-4">
+        <p class="text-sm text-gray-600">Envia uma mensagem de texto para um número WhatsApp.</p>
+
+        <div>
+          <p class="text-xs font-semibold text-gray-500 uppercase mb-2">Headers</p>
+          <table class="w-full text-xs border border-gray-100 rounded-lg overflow-hidden">
+            <thead class="bg-gray-50"><tr><th class="px-3 py-2 text-left text-gray-500 font-medium">Header</th><th class="px-3 py-2 text-left text-gray-500 font-medium">Valor</th><th class="px-3 py-2 text-left text-gray-500 font-medium">Obrigatório</th></tr></thead>
+            <tbody>
+              <tr class="border-t border-gray-100"><td class="px-3 py-2 font-mono text-gray-700">apikey</td><td class="px-3 py-2 text-gray-600">API Key da conexão</td><td class="px-3 py-2 text-green-600">Sim</td></tr>
+              <tr class="border-t border-gray-100"><td class="px-3 py-2 font-mono text-gray-700">Content-Type</td><td class="px-3 py-2 text-gray-600">application/json</td><td class="px-3 py-2 text-green-600">Sim</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div>
+          <p class="text-xs font-semibold text-gray-500 uppercase mb-2">Body (JSON)</p>
+          <table class="w-full text-xs border border-gray-100 rounded-lg overflow-hidden">
+            <thead class="bg-gray-50"><tr><th class="px-3 py-2 text-left text-gray-500 font-medium">Campo</th><th class="px-3 py-2 text-left text-gray-500 font-medium">Tipo</th><th class="px-3 py-2 text-left text-gray-500 font-medium">Descrição</th></tr></thead>
+            <tbody>
+              <tr class="border-t border-gray-100"><td class="px-3 py-2 font-mono text-gray-700">number</td><td class="px-3 py-2 text-gray-600">string</td><td class="px-3 py-2 text-gray-600">Número com código do país, sem +. Ex: <code class="bg-gray-100 rounded px-1">5511999999999</code></td></tr>
+              <tr class="border-t border-gray-100"><td class="px-3 py-2 font-mono text-gray-700">message</td><td class="px-3 py-2 text-gray-600">string</td><td class="px-3 py-2 text-gray-600">Texto da mensagem</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Exemplos -->
+        <div x-data="{ lang: 'curl' }">
+          <div class="flex items-center justify-between mb-2">
+            <p class="text-xs font-semibold text-gray-500 uppercase">Exemplo</p>
+            <div class="flex gap-1 bg-gray-100 p-0.5 rounded-lg">
+              <button @click="lang='curl'" class="text-xs px-2 py-0.5 rounded-md transition-all"
+                :class="lang==='curl' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500'">cURL</button>
+              <button @click="lang='js'" class="text-xs px-2 py-0.5 rounded-md transition-all"
+                :class="lang==='js' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500'">JavaScript</button>
+              <button @click="lang='python'" class="text-xs px-2 py-0.5 rounded-md transition-all"
+                :class="lang==='python' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500'">Python</button>
+            </div>
+          </div>
+
+          <div class="relative">
+            <pre x-show="lang==='curl'" id="ex-text-curl" class="bg-gray-900 text-gray-100 text-xs rounded-lg p-4 overflow-x-auto font-mono leading-relaxed">curl -X POST <span x-text="BASE"></span>/instances/minha-conexao/send/text \
+  -H "apikey: <span>SUA-API-KEY</span>" \
+  -H "Content-Type: application/json" \
+  -d '{"number":"5511999999999","message":"Olá! Como posso ajudar?"}'</pre>
+
+            <pre x-show="lang==='js'" id="ex-text-js" class="bg-gray-900 text-gray-100 text-xs rounded-lg p-4 overflow-x-auto font-mono leading-relaxed">const response = await fetch('<span x-text="BASE"></span>/instances/minha-conexao/send/text', {
+  method: 'POST',
+  headers: {
+    'apikey': 'SUA-API-KEY',
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    number: '5511999999999',
+    message: 'Olá! Como posso ajudar?',
+  }),
+});
+
+const data = await response.json();
+console.log(data);</pre>
+
+            <pre x-show="lang==='python'" id="ex-text-python" class="bg-gray-900 text-gray-100 text-xs rounded-lg p-4 overflow-x-auto font-mono leading-relaxed">import requests
+
+url = "<span x-text="BASE"></span>/instances/minha-conexao/send/text"
+headers = {
+    "apikey": "SUA-API-KEY",
+    "Content-Type": "application/json",
+}
+payload = {
+    "number": "5511999999999",
+    "message": "Olá! Como posso ajudar?",
+}
+
+response = requests.post(url, json=payload, headers=headers)
+print(response.json())</pre>
+
+            <button @click="copyCode('ex-text-' + lang)"
+              class="absolute top-2 right-2 text-xs bg-white/10 hover:bg-white/20 text-gray-300 rounded px-2 py-1 transition-colors"
+              x-text="copyDone === 'ex-text-' + lang ? 'Copiado!' : 'Copiar'"></button>
+          </div>
+        </div>
+
+        <!-- Resposta -->
+        <div>
+          <p class="text-xs font-semibold text-gray-500 uppercase mb-2">Resposta (200)</p>
+          <pre class="bg-gray-50 border border-gray-100 text-gray-700 text-xs rounded-lg p-3 font-mono">{"ok": true, "id": "uuid-da-mensagem"}</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Enviar mídia -->
+    <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div class="px-5 py-4 border-b border-gray-100 flex items-center gap-3">
+        <span class="bg-green-100 text-green-700 text-xs font-bold px-2 py-0.5 rounded font-mono">POST</span>
+        <code class="text-sm font-mono text-gray-700">/instances/:nome/send/media</code>
+      </div>
+      <div class="px-5 py-4 space-y-4">
+        <p class="text-sm text-gray-600">Envia imagem, vídeo, áudio ou documento. Usa <code class="bg-gray-100 rounded px-1 text-xs font-mono">multipart/form-data</code>.</p>
+
+        <div>
+          <p class="text-xs font-semibold text-gray-500 uppercase mb-2">Campos (form-data)</p>
+          <table class="w-full text-xs border border-gray-100 rounded-lg overflow-hidden">
+            <thead class="bg-gray-50"><tr><th class="px-3 py-2 text-left text-gray-500 font-medium">Campo</th><th class="px-3 py-2 text-left text-gray-500 font-medium">Tipo</th><th class="px-3 py-2 text-left text-gray-500 font-medium">Descrição</th></tr></thead>
+            <tbody>
+              <tr class="border-t border-gray-100"><td class="px-3 py-2 font-mono text-gray-700">number</td><td class="px-3 py-2 text-gray-600">string</td><td class="px-3 py-2 text-gray-600">Número com DDI</td></tr>
+              <tr class="border-t border-gray-100"><td class="px-3 py-2 font-mono text-gray-700">file</td><td class="px-3 py-2 text-gray-600">file</td><td class="px-3 py-2 text-gray-600">Arquivo (imagem, vídeo, áudio, documento)</td></tr>
+              <tr class="border-t border-gray-100"><td class="px-3 py-2 font-mono text-gray-700">caption</td><td class="px-3 py-2 text-gray-600">string</td><td class="px-3 py-2 text-gray-600">Legenda (opcional)</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div x-data="{ lang: 'curl' }">
+          <div class="flex items-center justify-between mb-2">
+            <p class="text-xs font-semibold text-gray-500 uppercase">Exemplo</p>
+            <div class="flex gap-1 bg-gray-100 p-0.5 rounded-lg">
+              <button @click="lang='curl'" class="text-xs px-2 py-0.5 rounded-md transition-all"
+                :class="lang==='curl' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500'">cURL</button>
+              <button @click="lang='python'" class="text-xs px-2 py-0.5 rounded-md transition-all"
+                :class="lang==='python' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500'">Python</button>
+            </div>
+          </div>
+          <div class="relative">
+            <pre x-show="lang==='curl'" id="ex-media-curl" class="bg-gray-900 text-gray-100 text-xs rounded-lg p-4 overflow-x-auto font-mono leading-relaxed">curl -X POST <span x-text="BASE"></span>/instances/minha-conexao/send/media \
+  -H "apikey: SUA-API-KEY" \
+  -F "number=5511999999999" \
+  -F "file=@/caminho/imagem.jpg" \
+  -F "caption=Confira nossa oferta!"</pre>
+            <pre x-show="lang==='python'" id="ex-media-python" class="bg-gray-900 text-gray-100 text-xs rounded-lg p-4 overflow-x-auto font-mono leading-relaxed">import requests
+
+url = "<span x-text="BASE"></span>/instances/minha-conexao/send/media"
+files = {"file": open("imagem.jpg", "rb")}
+data  = {"number": "5511999999999", "caption": "Confira nossa oferta!"}
+headers = {"apikey": "SUA-API-KEY"}
+
+r = requests.post(url, files=files, data=data, headers=headers)
+print(r.json())</pre>
+            <button @click="copyCode('ex-media-' + lang)"
+              class="absolute top-2 right-2 text-xs bg-white/10 hover:bg-white/20 text-gray-300 rounded px-2 py-1 transition-colors"
+              x-text="copyDone === 'ex-media-' + lang ? 'Copiado!' : 'Copiar'"></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Status da conexão -->
+    <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div class="px-5 py-4 border-b border-gray-100 flex items-center gap-3">
+        <span class="bg-blue-100 text-blue-700 text-xs font-bold px-2 py-0.5 rounded font-mono">GET</span>
+        <code class="text-sm font-mono text-gray-700">/instances/:nome/status</code>
+      </div>
+      <div class="px-5 py-4 space-y-3">
+        <p class="text-sm text-gray-600">Verifica se a conexão está ativa. Não requer autenticação.</p>
+        <div class="relative">
+          <pre id="ex-status-curl" class="bg-gray-900 text-gray-100 text-xs rounded-lg p-4 overflow-x-auto font-mono">curl <span x-text="BASE"></span>/instances/minha-conexao/status</pre>
+          <button @click="copyCode('ex-status-curl')"
+            class="absolute top-2 right-2 text-xs bg-white/10 hover:bg-white/20 text-gray-300 rounded px-2 py-1 transition-colors"
+            x-text="copyDone === 'ex-status-curl' ? 'Copiado!' : 'Copiar'"></button>
+        </div>
+        <div>
+          <p class="text-xs font-semibold text-gray-500 uppercase mb-2">Resposta (200)</p>
+          <pre class="bg-gray-50 border border-gray-100 text-gray-700 text-xs rounded-lg p-3 font-mono">{"status": "connected", "phone": "5511999999999"}</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Enviar mídia por URL -->
+    <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div class="px-5 py-4 border-b border-gray-100 flex items-center gap-3">
+        <span class="bg-green-100 text-green-700 text-xs font-bold px-2 py-0.5 rounded font-mono">POST</span>
+        <code class="text-sm font-mono text-gray-700">/instances/:nome/send/media-url</code>
+      </div>
+      <div class="px-5 py-4 space-y-3">
+        <p class="text-sm text-gray-600">Envia mídia a partir de uma URL pública.</p>
+        <div>
+          <p class="text-xs font-semibold text-gray-500 uppercase mb-2">Body (JSON)</p>
+          <table class="w-full text-xs border border-gray-100 rounded-lg overflow-hidden">
+            <thead class="bg-gray-50"><tr><th class="px-3 py-2 text-left text-gray-500 font-medium">Campo</th><th class="px-3 py-2 text-left text-gray-500 font-medium">Tipo</th><th class="px-3 py-2 text-left text-gray-500 font-medium">Descrição</th></tr></thead>
+            <tbody>
+              <tr class="border-t border-gray-100"><td class="px-3 py-2 font-mono text-gray-700">number</td><td class="px-3 py-2 text-gray-600">string</td><td class="px-3 py-2 text-gray-600">Número com DDI</td></tr>
+              <tr class="border-t border-gray-100"><td class="px-3 py-2 font-mono text-gray-700">url</td><td class="px-3 py-2 text-gray-600">string</td><td class="px-3 py-2 text-gray-600">URL pública do arquivo</td></tr>
+              <tr class="border-t border-gray-100"><td class="px-3 py-2 font-mono text-gray-700">caption</td><td class="px-3 py-2 text-gray-600">string</td><td class="px-3 py-2 text-gray-600">Legenda (opcional)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="relative">
+          <pre id="ex-mediaurl-curl" class="bg-gray-900 text-gray-100 text-xs rounded-lg p-4 overflow-x-auto font-mono leading-relaxed">curl -X POST <span x-text="BASE"></span>/instances/minha-conexao/send/media-url \
+  -H "apikey: SUA-API-KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"number":"5511999999999","url":"https://exemplo.com/foto.jpg","caption":"Confira!"}'</pre>
+          <button @click="copyCode('ex-mediaurl-curl')"
+            class="absolute top-2 right-2 text-xs bg-white/10 hover:bg-white/20 text-gray-300 rounded px-2 py-1 transition-colors"
+            x-text="copyDone === 'ex-mediaurl-curl' ? 'Copiado!' : 'Copiar'"></button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ===== TESTAR ===== -->
+  <div x-show="tab === 'test'" class="space-y-4">
+
+    <div class="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
+      <h2 class="text-sm font-semibold text-gray-800">Enviar mensagem de texto</h2>
+
+      <!-- Conexão -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Conexão</label>
+        <select x-model="testInst" @change="onInstChange()"
+          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <template x-for="i in instances" :key="i.name">
+            <option :value="i.name">
+              <span x-text="i.name"></span>
+              <span x-show="i.status === 'connected'"> (conectado)</span>
+              <span x-show="i.status !== 'connected'"> (offline)</span>
+            </option>
+          </template>
+        </select>
+        <template x-if="!instances.length">
+          <p class="text-xs text-gray-400 mt-1">Nenhuma conexão disponível. Crie uma em <a href="/connections" class="text-blue-500 hover:underline">Conexões</a>.</p>
+        </template>
+      </div>
+
+      <!-- API Key (só leitura) -->
+      <div x-show="testApiKey">
+        <label class="block text-sm font-medium text-gray-700 mb-1">API Key</label>
+        <div class="flex gap-2">
+          <input type="text" :value="testApiKey" readonly
+            class="flex-1 border border-gray-200 bg-gray-50 rounded-lg px-3 py-2 text-xs font-mono text-gray-600 focus:outline-none">
+          <button @click="navigator.clipboard.writeText(testApiKey)"
+            class="border border-gray-200 text-gray-500 rounded-lg px-3 py-2 text-xs hover:bg-gray-50 transition-colors">
+            Copiar
+          </button>
+        </div>
+      </div>
+
+      <!-- Número -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Número</label>
+        <input type="text" x-model="testPhone" placeholder="5511999999999 (com DDI, sem +)"
+          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+
+      <!-- Mensagem -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Mensagem</label>
+        <textarea x-model="testMessage" rows="3" placeholder="Digite a mensagem..."
+          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"></textarea>
+      </div>
+
+      <!-- Botão enviar -->
+      <button @click="sendTest()" :disabled="testLoading || !testInst || !testPhone || !testMessage"
+        class="w-full bg-blue-600 text-white rounded-lg px-4 py-2.5 text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+        <span x-text="testLoading ? 'Enviando...' : 'Enviar mensagem'"></span>
+      </button>
+
+      <!-- Resultado -->
+      <div x-show="testResult !== null">
+        <div class="flex items-center gap-2 mb-2">
+          <span class="w-2 h-2 rounded-full"
+            :class="testStatus === 'ok' ? 'bg-green-500' : 'bg-red-500'"></span>
+          <p class="text-xs font-medium"
+            :class="testStatus === 'ok' ? 'text-green-700' : 'text-red-600'"
+            x-text="testStatus === 'ok' ? 'Mensagem enviada!' : 'Erro ao enviar'"></p>
+        </div>
+        <pre class="bg-gray-50 border border-gray-100 text-gray-700 text-xs rounded-lg p-3 font-mono overflow-x-auto"
+          x-text="testResult"></pre>
+      </div>
+    </div>
+
+    <!-- Curl gerado dinamicamente -->
+    <div class="bg-white rounded-xl border border-gray-200 p-5" x-show="testInst && testPhone && testMessage">
+      <div class="flex items-center justify-between mb-2">
+        <p class="text-xs font-semibold text-gray-500 uppercase">cURL equivalente</p>
+        <button @click="copyCode('gen-curl')"
+          class="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+          x-text="copyDone === 'gen-curl' ? 'Copiado!' : 'Copiar'"></button>
+      </div>
+      <pre id="gen-curl" class="bg-gray-900 text-gray-100 text-xs rounded-lg p-4 overflow-x-auto font-mono leading-relaxed"
+        x-text="`curl -X POST ${BASE}/instances/${testInst}/send/text \\\n  -H &quot;apikey: ${testApiKey}&quot; \\\n  -H &quot;Content-Type: application/json&quot; \\\n  -d '{&quot;number&quot;:&quot;${testPhone}&quot;,&quot;message&quot;:&quot;${testMessage}&quot;}'`"></pre>
+    </div>
+
+  </div>
+
+</div>
+</div>
+
+{{ end }}

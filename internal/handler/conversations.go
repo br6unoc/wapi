@@ -21,12 +21,21 @@ import (
 )
 
 func ListConversations(c *gin.Context) {
+	companyID := currentCompanyID(c)
+	statusFilter := c.Query("status")
+	instanceName := c.Query("instance_name")
+	sectorID := c.Query("sector_id")
+	unreadOnly := c.Query("unread") == "1"
+
 	rows, err := postgres.DB.Query(`
 		SELECT
 			c.id AS contact_id,
 			c.phone,
 			CASE WHEN c.name != '' THEN c.name ELSE c.phone END AS name,
 			c.unread_count,
+			c.conv_status,
+			COALESCE(c.assigned_user_id::text, '') AS assigned_user_id,
+			COALESCE(u.username, '') AS assigned_username,
 			i.id AS instance_id,
 			i.name AS instance_name,
 			m.content AS last_message,
@@ -36,6 +45,7 @@ func ListConversations(c *gin.Context) {
 			c.agent_mode
 		FROM contacts c
 		JOIN instances i ON i.id = c.instance_id
+		LEFT JOIN users u ON u.id = c.assigned_user_id
 		LEFT JOIN LATERAL (
 			SELECT content, direction, type, created_at
 			FROM messages
@@ -43,10 +53,17 @@ func ListConversations(c *gin.Context) {
 			ORDER BY created_at DESC
 			LIMIT 1
 		) m ON true
-		WHERE m.created_at IS NOT NULL
+		WHERE i.company_id = $1
+		AND m.created_at IS NOT NULL
+		AND ($2::text = '' OR c.conv_status = $2)
+		AND ($3::text = '' OR i.name = $3)
+		AND ($4::text = '' OR EXISTS (
+			SELECT 1 FROM instance_sectors WHERE instance_id = i.id AND sector_id::text = $4
+		))
+		AND ($5::boolean = false OR c.unread_count > 0)
 		ORDER BY m.created_at DESC
 		LIMIT 100
-	`)
+	`, companyID, statusFilter, instanceName, sectorID, unreadOnly)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -54,17 +71,20 @@ func ListConversations(c *gin.Context) {
 	defer rows.Close()
 
 	type Conv struct {
-		ContactID     string `json:"contact_id"`
-		Phone         string `json:"phone"`
-		Name          string `json:"name"`
-		UnreadCount   int    `json:"unread_count"`
-		InstanceID    string `json:"instance_id"`
-		InstanceName  string `json:"instance_name"`
-		LastMessage   string `json:"last_message"`
-		LastDirection string `json:"last_direction"`
-		LastType      string `json:"last_type"`
-		LastMessageAt string `json:"last_message_at"`
-		AgentMode     bool   `json:"agent_mode"`
+		ContactID        string `json:"contact_id"`
+		Phone            string `json:"phone"`
+		Name             string `json:"name"`
+		UnreadCount      int    `json:"unread_count"`
+		ConvStatus       string `json:"conv_status"`
+		AssignedUserID   string `json:"assigned_user_id"`
+		AssignedUsername string `json:"assigned_username"`
+		InstanceID       string `json:"instance_id"`
+		InstanceName     string `json:"instance_name"`
+		LastMessage      string `json:"last_message"`
+		LastDirection    string `json:"last_direction"`
+		LastType         string `json:"last_type"`
+		LastMessageAt    string `json:"last_message_at"`
+		AgentMode        bool   `json:"agent_mode"`
 	}
 
 	convs := make([]Conv, 0)
@@ -72,6 +92,7 @@ func ListConversations(c *gin.Context) {
 		var conv Conv
 		if err := rows.Scan(
 			&conv.ContactID, &conv.Phone, &conv.Name, &conv.UnreadCount,
+			&conv.ConvStatus, &conv.AssignedUserID, &conv.AssignedUsername,
 			&conv.InstanceID, &conv.InstanceName,
 			&conv.LastMessage, &conv.LastDirection, &conv.LastType,
 			&conv.LastMessageAt, &conv.AgentMode,
@@ -81,6 +102,111 @@ func ListConversations(c *gin.Context) {
 		convs = append(convs, conv)
 	}
 	c.JSON(http.StatusOK, convs)
+}
+
+func GetUnreadCount(c *gin.Context) {
+	companyID := currentCompanyID(c)
+	var count int
+	postgres.DB.QueryRow(`
+		SELECT COUNT(DISTINCT c.id) FROM contacts c
+		JOIN instances i ON i.id = c.instance_id
+		WHERE i.company_id = $1 AND c.unread_count > 0
+	`, companyID).Scan(&count)
+	c.JSON(http.StatusOK, gin.H{"count": count})
+}
+
+func UpdateConvStatus(c *gin.Context) {
+	name := c.Param("name")
+	phone := c.Param("phone")
+
+	var req struct {
+		Status string `json:"status" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "status obrigatório"})
+		return
+	}
+	valid := map[string]bool{"open": true, "in_progress": true, "closed": true}
+	if !valid[req.Status] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "status inválido: use open, in_progress ou closed"})
+		return
+	}
+
+	var contactID string
+	err := postgres.DB.QueryRow(`
+		SELECT c.id FROM contacts c
+		JOIN instances i ON i.id = c.instance_id
+		WHERE i.name = $1 AND c.phone = $2
+	`, name, phone).Scan(&contactID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contato não encontrado"})
+		return
+	}
+
+	postgres.DB.Exec(`UPDATE contacts SET conv_status = $1 WHERE id = $2`, req.Status, contactID)
+
+	payload, _ := json.Marshal(map[string]interface{}{
+		"event": "conv_status_changed",
+		"data":  map[string]interface{}{"contact_id": contactID, "status": req.Status},
+	})
+	hub.Global.Broadcast(payload)
+
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func AssignConversation(c *gin.Context) {
+	name := c.Param("name")
+	phone := c.Param("phone")
+	companyID := currentCompanyID(c)
+
+	var req struct {
+		UserID *string `json:"user_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "dados inválidos"})
+		return
+	}
+
+	var contactID string
+	err := postgres.DB.QueryRow(`
+		SELECT c.id FROM contacts c
+		JOIN instances i ON i.id = c.instance_id
+		WHERE i.name = $1 AND c.phone = $2
+	`, name, phone).Scan(&contactID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contato não encontrado"})
+		return
+	}
+
+	var assignedUsername string
+	if req.UserID != nil && *req.UserID != "" {
+		var count int
+		postgres.DB.QueryRow(`SELECT COUNT(*) FROM users WHERE id = $1 AND company_id = $2`, *req.UserID, companyID).Scan(&count)
+		if count == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "usuário não encontrado"})
+			return
+		}
+		postgres.DB.Exec(`UPDATE contacts SET assigned_user_id = $1 WHERE id = $2`, *req.UserID, contactID)
+		postgres.DB.QueryRow(`SELECT username FROM users WHERE id = $1`, *req.UserID).Scan(&assignedUsername)
+	} else {
+		postgres.DB.Exec(`UPDATE contacts SET assigned_user_id = NULL WHERE id = $1`, contactID)
+	}
+
+	assignedUserID := ""
+	if req.UserID != nil {
+		assignedUserID = *req.UserID
+	}
+	payload, _ := json.Marshal(map[string]interface{}{
+		"event": "conv_assigned",
+		"data": map[string]interface{}{
+			"contact_id":        contactID,
+			"assigned_user_id":  assignedUserID,
+			"assigned_username": assignedUsername,
+		},
+	})
+	hub.Global.Broadcast(payload)
+
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func GetMessages(c *gin.Context) {
@@ -266,9 +392,8 @@ func SendMediaFromUI(c *gin.Context) {
 	// Desativa agente quando humano envia mensagem
 	postgres.DB.Exec(`UPDATE contacts SET agent_mode = FALSE WHERE id = $1`, contactID)
 	mediaAgentPayload, _ := json.Marshal(map[string]interface{}{
-		"type":       "agent_mode_changed",
-		"contact_id": contactID,
-		"agent_mode": false,
+		"event": "agent_mode_changed",
+		"data":  map[string]interface{}{"contact_id": contactID, "agent_mode": false},
 	})
 	hub.Global.Broadcast(mediaAgentPayload)
 
@@ -335,9 +460,8 @@ func TakeoverConversation(c *gin.Context) {
 	postgres.DB.Exec(`UPDATE contacts SET agent_mode = FALSE WHERE id = $1`, contactID)
 
 	payload, _ := json.Marshal(map[string]interface{}{
-		"type":       "agent_mode_changed",
-		"contact_id": contactID,
-		"agent_mode": false,
+		"event": "agent_mode_changed",
+		"data":  map[string]interface{}{"contact_id": contactID, "agent_mode": false},
 	})
 	hub.Global.Broadcast(payload)
 
@@ -367,9 +491,8 @@ func ResumeAgent(c *gin.Context) {
 	postgres.DB.Exec(`UPDATE contacts SET agent_mode = TRUE WHERE id = $1`, contactID)
 
 	payload, _ := json.Marshal(map[string]interface{}{
-		"type":       "agent_mode_changed",
-		"contact_id": contactID,
-		"agent_mode": true,
+		"event": "agent_mode_changed",
+		"data":  map[string]interface{}{"contact_id": contactID, "agent_mode": true},
 	})
 	hub.Global.Broadcast(payload)
 
@@ -464,9 +587,8 @@ func SendFromUI(c *gin.Context) {
 	// Desativa agente quando humano envia mensagem
 	postgres.DB.Exec(`UPDATE contacts SET agent_mode = FALSE WHERE id = $1`, contactID)
 	agentPayload, _ := json.Marshal(map[string]interface{}{
-		"type":       "agent_mode_changed",
-		"contact_id": contactID,
-		"agent_mode": false,
+		"event": "agent_mode_changed",
+		"data":  map[string]interface{}{"contact_id": contactID, "agent_mode": false},
 	})
 	hub.Global.Broadcast(agentPayload)
 

@@ -2,7 +2,7 @@ package handler
 
 import (
 	"net/http"
-	"wapi/internal/auth"
+	"botwapp/internal/auth"
 
 	"github.com/gin-gonic/gin"
 )

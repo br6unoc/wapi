@@ -79,17 +79,102 @@ func GetInstance(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
 		return
 	}
+
+	var firstAgentID, returningAgentID string
+	postgres.DB.QueryRow(
+		`SELECT COALESCE(first_contact_agent_id::text,''), COALESCE(returning_agent_id::text,'') FROM instances WHERE id = $1`,
+		inst.ID,
+	).Scan(&firstAgentID, &returningAgentID)
+
 	c.JSON(http.StatusOK, gin.H{
-		"id":                    inst.ID,
-		"name":                  inst.Name,
-		"status":                inst.Status,
-		"phone":                 inst.Phone,
-		"webhook_url":           inst.WebhookURL,
-		"transcription_enabled": inst.TranscriptionEnabled,
-		"typing_delay_min":      inst.TypingDelayMin,
-		"typing_delay_max":      inst.TypingDelayMax,
-		"api_key":               inst.APIKey,
+		"id":                      inst.ID,
+		"name":                    inst.Name,
+		"status":                  inst.Status,
+		"phone":                   inst.Phone,
+		"webhook_url":             inst.WebhookURL,
+		"transcription_enabled":   inst.TranscriptionEnabled,
+		"typing_delay_min":        inst.TypingDelayMin,
+		"typing_delay_max":        inst.TypingDelayMax,
+		"api_key":                 inst.APIKey,
+		"first_contact_agent_id":  firstAgentID,
+		"returning_agent_id":      returningAgentID,
 	})
+}
+
+func UpdateInstanceAgents(c *gin.Context) {
+	name := c.Param("name")
+	inst, ok := instance.Global.GetByName(name)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
+		return
+	}
+
+	var req struct {
+		FirstContactAgentID *string `json:"first_contact_agent_id"`
+		ReturningAgentID    *string `json:"returning_agent_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "dados inválidos"})
+		return
+	}
+
+	var firstAgentID, returningAgentID interface{}
+	if req.FirstContactAgentID != nil && *req.FirstContactAgentID != "" {
+		firstAgentID = *req.FirstContactAgentID
+	}
+	if req.ReturningAgentID != nil && *req.ReturningAgentID != "" {
+		returningAgentID = *req.ReturningAgentID
+	}
+
+	_, err := postgres.DB.Exec(
+		`UPDATE instances SET first_contact_agent_id = $1, returning_agent_id = $2 WHERE id = $3`,
+		firstAgentID, returningAgentID, inst.ID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func UpdateInstanceSectors(c *gin.Context) {
+	name := c.Param("name")
+	inst, ok := instance.Global.GetByName(name)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
+		return
+	}
+
+	var req struct {
+		SectorIDs []string `json:"sector_ids"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "dados inválidos"})
+		return
+	}
+	if req.SectorIDs == nil {
+		req.SectorIDs = []string{}
+	}
+
+	tx, err := postgres.DB.Begin()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "erro interno"})
+		return
+	}
+	defer tx.Rollback()
+
+	tx.Exec(`DELETE FROM instance_sectors WHERE instance_id = $1`, inst.ID)
+	for _, sID := range req.SectorIDs {
+		tx.Exec(`INSERT INTO instance_sectors (instance_id, sector_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, inst.ID, sID)
+	}
+
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "erro ao salvar setores"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func DeleteInstance(c *gin.Context) {

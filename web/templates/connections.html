@@ -4,8 +4,10 @@
 
 <script>
 const TOKEN = document.querySelector('meta[name="auth-token"]')?.content || '';
+const AGENTS = [{{ range .Agents }}{ id: "{{ .ID }}", name: "{{ .Name }}" },{{ end }}];
+const SECTORS = [{{ range .Sectors }}{ id: "{{ .ID }}", name: "{{ .Name }}" },{{ end }}];
 
-function instanceCard(name, initialStatus, initialPhone) {
+function instanceCard(name, initialStatus, initialPhone, initialFirstAgentId, initialReturningAgentId, initialSectorIdsJson) {
   return {
     name,
     status: initialStatus,
@@ -14,6 +16,29 @@ function instanceCard(name, initialStatus, initialPhone) {
     showQR: false,
     qrUrl: null,
     es: null,
+
+    // modal configurações
+    showConfig: false,
+    agents: AGENTS,
+    sectors: SECTORS,
+    firstContactAgentId: initialFirstAgentId || '',
+    returningAgentId: initialReturningAgentId || '',
+    selectedSectorIds: [],
+    saving: false,
+    saved: false,
+
+    init() {
+      try {
+        this.selectedSectorIds = JSON.parse(initialSectorIdsJson || '[]');
+      } catch { this.selectedSectorIds = []; }
+    },
+
+    isSectorSelected(id) { return this.selectedSectorIds.includes(id); },
+    toggleSector(id) {
+      const idx = this.selectedSectorIds.indexOf(id);
+      if (idx === -1) this.selectedSectorIds.push(id);
+      else this.selectedSectorIds.splice(idx, 1);
+    },
 
     async connect() {
       this.loading = true;
@@ -62,11 +87,9 @@ function instanceCard(name, initialStatus, initialPhone) {
       this.es.onmessage = (e) => {
         let msg;
         try { msg = JSON.parse(e.data); } catch { return; }
-
         if (msg.event === 'qr') {
-          const code = msg.data.qrcode;
           this.showQR = true;
-          this.qrUrl = code; // já é um data URL gerado no servidor
+          this.qrUrl = msg.data.qrcode;
         } else if (msg.event === 'connected') {
           this.status = 'connected';
           this.phone = msg.data.phone || '';
@@ -84,6 +107,32 @@ function instanceCard(name, initialStatus, initialPhone) {
       this.showQR = false;
       this.qrUrl = null;
       if (this.es) { this.es.close(); this.es = null; }
+    },
+
+    async saveConfig() {
+      this.saving = true;
+      this.saved = false;
+      try {
+        await Promise.all([
+          fetch(`/instances/${this.name}/agents`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${TOKEN}` },
+            body: JSON.stringify({
+              first_contact_agent_id: this.firstContactAgentId || null,
+              returning_agent_id: this.returningAgentId || null,
+            })
+          }),
+          fetch(`/instances/${this.name}/sectors`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${TOKEN}` },
+            body: JSON.stringify({ sector_ids: this.selectedSectorIds })
+          })
+        ]);
+        this.saved = true;
+        setTimeout(() => { this.saved = false; this.showConfig = false; }, 1200);
+      } finally {
+        this.saving = false;
+      }
     }
   }
 }
@@ -100,10 +149,7 @@ function createInstance() {
       try {
         const resp = await fetch('/instances', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${TOKEN}`
-          },
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${TOKEN}` },
           body: JSON.stringify({ name: this.nome.trim() })
         });
         if (!resp.ok) {
@@ -147,7 +193,8 @@ function createInstance() {
 
   <div class="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
     {{ range .Instances }}
-    <div x-data="instanceCard('{{ .Name }}', '{{ .Status }}', '{{ .Phone }}')"
+    <div x-data="instanceCard('{{ .Name }}', '{{ .Status }}', '{{ .Phone }}', '{{ .FirstContactAgentID }}', '{{ .ReturningAgentID }}', '{{ .SectorIDs }}')"
+         x-init="init()"
          class="bg-white rounded-xl border border-gray-200 shadow-sm p-5 hover:shadow-md transition-shadow">
 
       <!-- Card header -->
@@ -182,12 +229,100 @@ function createInstance() {
           class="flex-1 text-sm border border-gray-200 text-gray-600 rounded-lg px-3 py-2 hover:bg-gray-50 transition-colors disabled:opacity-50 font-medium">
           <span x-text="loading ? 'Aguarde...' : 'Desconectar'"></span>
         </button>
+        <button @click="showConfig = true"
+          class="text-sm border border-gray-200 text-gray-500 rounded-lg px-3 py-2 hover:bg-gray-50 hover:text-gray-700 transition-colors" title="Configurações">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+          </svg>
+        </button>
         <button @click="remove()"
           class="text-sm border border-red-100 text-red-400 rounded-lg px-3 py-2 hover:bg-red-50 hover:border-red-200 transition-colors">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
           </svg>
         </button>
+      </div>
+
+      <!-- Modal Configurações -->
+      <div x-show="showConfig" x-cloak
+        class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">
+        <div class="bg-white rounded-xl border border-gray-200 shadow-xl w-full max-w-sm max-h-[90vh] overflow-y-auto">
+          <div class="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+            <div>
+              <h2 class="text-base font-semibold text-gray-800">Configurações</h2>
+              <p class="text-xs text-gray-500 mt-0.5" x-text="name"></p>
+            </div>
+            <button @click="showConfig = false" class="text-gray-400 hover:text-gray-600 p-1">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+
+          <div class="px-5 py-4 space-y-5">
+
+            <!-- Agentes -->
+            <div>
+              <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Agentes de IA</p>
+              <div class="space-y-3">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Primeiro contato</label>
+                  <select x-model="firstContactAgentId"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                    <option value="">Sem agente</option>
+                    <template x-for="a in agents" :key="a.id">
+                      <option :value="a.id" x-text="a.name"></option>
+                    </template>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Demais contatos</label>
+                  <select x-model="returningAgentId"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                    <option value="">Sem agente</option>
+                    <template x-for="a in agents" :key="a.id">
+                      <option :value="a.id" x-text="a.name"></option>
+                    </template>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <!-- Setores -->
+            <div>
+              <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Setores</p>
+              <div x-show="sectors.length === 0" class="text-xs text-gray-400 py-1">
+                Nenhum setor cadastrado. <a href="/sectors" class="text-blue-500 underline">Criar setor</a>
+              </div>
+              <div class="space-y-1.5">
+                <template x-for="s in sectors" :key="s.id">
+                  <label class="flex items-center gap-3 px-3 py-2 rounded-lg border border-gray-200 cursor-pointer hover:bg-gray-50 transition-colors"
+                    :class="isSectorSelected(s.id) ? 'border-blue-300 bg-blue-50' : ''">
+                    <input type="checkbox" :checked="isSectorSelected(s.id)" @change="toggleSector(s.id)"
+                      class="w-4 h-4 text-blue-600 rounded">
+                    <span class="text-sm text-gray-700" x-text="s.name"></span>
+                  </label>
+                </template>
+              </div>
+            </div>
+
+          </div>
+
+          <div class="px-5 py-4 border-t border-gray-100 flex gap-2">
+            <button @click="showConfig = false"
+              class="flex-1 border border-gray-300 text-gray-600 rounded-lg px-4 py-2 text-sm hover:bg-gray-50">
+              Cancelar
+            </button>
+            <button @click="saveConfig()" :disabled="saving"
+              class="flex-1 bg-blue-600 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors">
+              <span x-show="saved">Salvo!</span>
+              <span x-show="saving && !saved">Salvando...</span>
+              <span x-show="!saving && !saved">Salvar</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- Modal QR Code -->

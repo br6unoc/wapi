@@ -56,6 +56,18 @@ func AdminOrAbove() gin.HandlerFunc {
 	}
 }
 
+func SuperAdminOnly() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		role, _ := c.Get("role")
+		if role != "super_admin" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "acesso negado"})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 func currentCompanyID(c *gin.Context) string {
 	v, _ := c.Get("company_id")
 	s, _ := v.(string)

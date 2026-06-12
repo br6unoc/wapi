@@ -3,6 +3,7 @@ package instance
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -344,6 +345,9 @@ func (inst *Instance) handleEvent(evt interface{}) {
 		os.Remove(fmt.Sprintf("/app/sessions/%s.db", inst.ID))
 	case *events.Message:
 		if v.Info.IsFromMe {
+			if v.Info.Chat.Server != "g.us" && v.Info.Chat.Server != "broadcast" {
+				go inst.processOutgoingMessage(v)
+			}
 			return
 		}
 		inst.processMessage(v)
@@ -428,6 +432,53 @@ func (inst *Instance) processMessage(v *events.Message) {
 
 	inst.broadcastMessage(msgData)
 	go inst.sendWebhook(msgData)
+}
+
+// processOutgoingMessage salva mensagens enviadas pelo celular físico (IsFromMe).
+func (inst *Instance) processOutgoingMessage(v *events.Message) {
+	var phone string
+	chatJID := v.Info.Chat.ToNonAD()
+	if chatJID.Server == "lid" {
+		// Resolve LID → número de telefone real
+		phoneJID, err := inst.Container.LIDMap.GetPNForLID(context.Background(), chatJID)
+		if err == nil && !phoneJID.IsEmpty() {
+			phone = phoneJID.User
+		} else {
+			log.Printf("[OUTGOING] LID não resolvido: %s (%v)", chatJID.User, err)
+			return
+		}
+	} else {
+		phone = chatJID.User
+	}
+	if phone == "" {
+		return
+	}
+
+	var content, msgType string
+	switch {
+	case v.Message.GetConversation() != "":
+		content = v.Message.GetConversation()
+		msgType = "text"
+	case v.Message.GetExtendedTextMessage() != nil:
+		content = v.Message.GetExtendedTextMessage().GetText()
+		msgType = "text"
+	case v.Message.GetImageMessage() != nil:
+		content = "[imagem]"
+		msgType = "image"
+	case v.Message.GetVideoMessage() != nil:
+		content = "[vídeo]"
+		msgType = "video"
+	case v.Message.GetDocumentMessage() != nil:
+		content = "[documento]"
+		msgType = "document"
+	case v.Message.GetAudioMessage() != nil:
+		content = "[áudio]"
+		msgType = "audio"
+	default:
+		return
+	}
+
+	inst.saveMessage(phone, "", content, msgType, v.Info.ID, "out", "", "")
 }
 
 func (inst *Instance) processAudio(v *events.Message, senderNumber string, isGroup bool, msgData map[string]interface{}) {
@@ -614,8 +665,7 @@ func (inst *Instance) saveMessageAndReply(phone, pushName, content, msgID string
 // tryAgentReply verifica se há agente ativo e envia resposta automática via AI.
 func (inst *Instance) tryAgentReply(contactID, phone string) {
 	// 1. Verificar agent_mode e is_first_contact
-	var agentMode bool
-	var isFirstContact bool
+	var agentMode, isFirstContact bool
 	err := postgres.DB.QueryRow(
 		`SELECT agent_mode, is_first_contact FROM contacts WHERE id = $1`,
 		contactID,
@@ -624,43 +674,61 @@ func (inst *Instance) tryAgentReply(contactID, phone string) {
 		return
 	}
 
-	// 2. Determinar tipo de contato
-	contactType := "returning"
-	if isFirstContact {
-		contactType = "first_contact"
-	}
-
-	// 3. Buscar agente ativo para esta instância e tipo de contato
-	var agentID, agentPrompt, handoffKeyword string
-	err = postgres.DB.QueryRow(
-		`SELECT id, prompt, handoff_keyword FROM agents WHERE instance_id = $1 AND contact_type = $2 AND is_active = TRUE`,
-		inst.ID, contactType,
-	).Scan(&agentID, &agentPrompt, &handoffKeyword)
-	if err != nil {
-		return // nenhum agente configurado — silencioso
-	}
-
-	// 4. Buscar company_id desta instância
+	// 2. Buscar agent_id e company_id desta instância numa única query
+	var firstAgentID, returningAgentID sql.NullString
 	var companyID string
 	err = postgres.DB.QueryRow(
-		`SELECT company_id FROM instances WHERE id = $1`,
+		`SELECT COALESCE(company_id::text,''), first_contact_agent_id, returning_agent_id FROM instances WHERE id = $1`,
 		inst.ID,
-	).Scan(&companyID)
+	).Scan(&companyID, &firstAgentID, &returningAgentID)
 	if err != nil || companyID == "" {
-		log.Printf("[AGENT] company_id não encontrado para instância %s", inst.ID)
+		log.Printf("[AGENT] instância %s sem company_id: %v", inst.ID, err)
 		return
 	}
 
-	// 5. Carregar configuração de AI para esta empresa
-	provider, _ := postgres.GetCompanySetting(companyID, "ai_provider")
-	model, _ := postgres.GetCompanySetting(companyID, "ai_model")
-	apiKey, _ := postgres.GetCompanySetting(companyID, "ai_api_key")
+	var agentID string
+	if isFirstContact {
+		if !firstAgentID.Valid || firstAgentID.String == "" {
+			return
+		}
+		agentID = firstAgentID.String
+	} else {
+		if !returningAgentID.Valid || returningAgentID.String == "" {
+			return
+		}
+		agentID = returningAgentID.String
+	}
+
+	// 3. Buscar dados do agente
+	var agentPrompt, handoffKeyword string
+	err = postgres.DB.QueryRow(
+		`SELECT prompt, handoff_keyword FROM agents WHERE id = $1 AND is_active = TRUE`,
+		agentID,
+	).Scan(&agentPrompt, &handoffKeyword)
+	if err != nil {
+		return
+	}
+
+	// 4. Carregar configuração de AI conversacional desta empresa
+	provider, _ := postgres.GetCompanySetting(companyID, "conversational_ai_provider")
+	model, _ := postgres.GetCompanySetting(companyID, "conversational_ai_model")
+	apiKey, _ := postgres.GetCompanySetting(companyID, "conversational_ai_api_key")
+	// Fallback para chaves legadas
+	if provider == "" {
+		provider, _ = postgres.GetCompanySetting(companyID, "ai_provider")
+	}
+	if model == "" {
+		model, _ = postgres.GetCompanySetting(companyID, "ai_model")
+	}
+	if apiKey == "" {
+		apiKey, _ = postgres.GetCompanySetting(companyID, "ai_api_key")
+	}
 	if provider == "" || model == "" || apiKey == "" {
-		log.Printf("[AGENT] configuração de AI incompleta para empresa %s", companyID)
+		log.Printf("[AGENT] configuração de AI conversacional incompleta para empresa %s", companyID)
 		return
 	}
 
-	// 6. Carregar últimas 20 mensagens de texto deste contato como histórico
+	// 5. Carregar últimas 20 mensagens de texto deste contato como histórico
 	rows, err := postgres.DB.Query(
 		`SELECT direction, content FROM messages WHERE contact_id = $1 AND type = 'text' ORDER BY created_at DESC LIMIT 20`,
 		contactID,
@@ -686,7 +754,7 @@ func (inst *Instance) tryAgentReply(contactID, phone string) {
 		history[i], history[j] = history[j], history[i]
 	}
 
-	// 7. Chamar AI
+	// 6. Chamar AI
 	cfg := aiagent.Config{Provider: provider, Model: model, APIKey: apiKey}
 	aiResp, err := aiagent.Chat(cfg, agentPrompt, history)
 	if err != nil {
@@ -694,14 +762,13 @@ func (inst *Instance) tryAgentReply(contactID, phone string) {
 		return
 	}
 
-	// 8. Verificar palavra-chave de handoff
+	// 7. Verificar palavra-chave de handoff
 	if handoffKeyword != "" && strings.Contains(aiResp, handoffKeyword) {
 		postgres.DB.Exec(`UPDATE contacts SET agent_mode = FALSE WHERE id = $1`, contactID)
 		aiResp = strings.TrimSpace(strings.ReplaceAll(aiResp, handoffKeyword, ""))
 		payload, _ := json.Marshal(map[string]interface{}{
-			"type":       "agent_mode_changed",
-			"contact_id": contactID,
-			"agent_mode": false,
+			"event": "agent_mode_changed",
+			"data":  map[string]interface{}{"contact_id": contactID, "agent_mode": false},
 		})
 		hub.Global.Broadcast(payload)
 	}
@@ -710,33 +777,38 @@ func (inst *Instance) tryAgentReply(contactID, phone string) {
 		return
 	}
 
-	// 9. Marcar is_first_contact = false
+	// 8. Marcar is_first_contact = false
 	postgres.DB.Exec(`UPDATE contacts SET is_first_contact = FALSE WHERE id = $1`, contactID)
 
-	// 10. Salvar resposta da AI como mensagem de saída
+	// 9. Salvar resposta da AI como mensagem de saída
 	outID := uuid.New().String()
 	var createdAt string
 	postgres.DB.QueryRow(
-		`INSERT INTO messages (id, contact_id, direction, content, type, wa_id) VALUES ($1, $2, 'out', $3, 'text', '') RETURNING created_at`,
-		outID, contactID, aiResp,
+		`INSERT INTO messages (id, instance_id, contact_id, direction, content, type, wa_message_id, media_path, media_name)
+		 VALUES ($1, $2, $3, 'out', $4, 'text', '', '', '') RETURNING created_at`,
+		outID, inst.ID, contactID, aiResp,
 	).Scan(&createdAt)
 
-	// 11. Broadcast evento WebSocket new_message
+	// 10. Broadcast evento WebSocket new_message
 	wsPayload, _ := json.Marshal(map[string]interface{}{
-		"type": "new_message",
+		"event": "new_message",
 		"data": map[string]interface{}{
-			"contact_id": contactID,
-			"direction":  "out",
-			"content":    aiResp,
-			"msg_type":   "text",
-			"media_path": "",
-			"media_name": "",
-			"created_at": createdAt,
+			"id":            outID,
+			"instance_id":   inst.ID,
+			"instance_name": inst.Name,
+			"contact_id":    contactID,
+			"phone":         phone,
+			"direction":     "out",
+			"content":       aiResp,
+			"type":          "text",
+			"media_path":    "",
+			"media_name":    "",
+			"created_at":    createdAt,
 		},
 	})
 	hub.Global.Broadcast(wsPayload)
 
-	// 12. Enviar via WhatsApp
+	// 11. Enviar via WhatsApp
 	jid := types.NewJID(phone, types.DefaultUserServer)
 	msg := &waProto.Message{
 		Conversation: proto.String(aiResp),
@@ -750,9 +822,10 @@ func (inst *Instance) tryAgentReply(contactID, phone string) {
 func (inst *Instance) saveMessage(phone, pushName, content, msgType, waID, direction, mediaPath, mediaName string) {
 	var contactID string
 	err := postgres.DB.QueryRow(
-		`INSERT INTO contacts (instance_id, phone, name)
-		 VALUES ($1, $2, $3)
-		 ON CONFLICT (instance_id, phone) DO UPDATE SET name = EXCLUDED.name
+		`INSERT INTO contacts (instance_id, phone, name, last_contact_at)
+		 VALUES ($1, $2, $3, NOW())
+		 ON CONFLICT (instance_id, phone) DO UPDATE
+		   SET name = EXCLUDED.name, last_contact_at = NOW()
 		 RETURNING id`,
 		inst.ID, phone, pushName,
 	).Scan(&contactID)

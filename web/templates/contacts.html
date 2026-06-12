@@ -1,0 +1,261 @@
+{{ template "layout.html" . }}
+{{ define "title" }}Contatos — BotWapp{{ end }}
+{{ define "content" }}
+
+<script>
+const TOKEN = document.querySelector('meta[name="auth-token"]')?.content || '';
+
+function contactsPage() {
+  return {
+    search: '',
+    contacts: {{ if .Contacts }}[{{ range .Contacts }}
+      { id: '{{ .ID }}', phone: '{{ .Phone }}', name: {{ printf "%q" .Name }}, instance: '{{ .InstanceName }}', first: '{{ .FirstContactAt }}', last: '{{ .LastContactAt }}', purchases: {{ .PurchaseCount }}, isBlocked: {{ .IsBlocked }}, tags: [] },
+    {{ end }}]{{ else }}[]{{ end }},
+
+    allTags: [],
+    tagLinks: {}, // contact_id → [tag_id, ...]
+
+    tagModal: null, // contact sendo editado
+    tagSearch: '',
+
+    async init() {
+      const [tagsRes, linksRes] = await Promise.all([
+        fetch('/api/tags', { headers: { 'Authorization': `Bearer ${TOKEN}` } }),
+        fetch('/api/contacts/tag-links', { headers: { 'Authorization': `Bearer ${TOKEN}` } }),
+      ]);
+      this.allTags = await tagsRes.json();
+      const links = await linksRes.json();
+      links.forEach(l => {
+        if (!this.tagLinks[l.contact_id]) this.tagLinks[l.contact_id] = [];
+        this.tagLinks[l.contact_id].push(l.tag_id);
+      });
+      this.contacts.forEach(c => {
+        c.tags = (this.tagLinks[c.id] || []);
+      });
+    },
+
+    get filtered() {
+      const q = this.search.toLowerCase();
+      if (!q) return this.contacts;
+      return this.contacts.filter(c =>
+        c.phone.includes(q) || c.name.toLowerCase().includes(q) || c.instance.toLowerCase().includes(q)
+      );
+    },
+
+    tagById(id) { return this.allTags.find(t => t.id === id); },
+
+    contactHasTag(c, tagId) { return c.tags.includes(tagId); },
+
+    get filteredModalTags() {
+      const q = this.tagSearch.toLowerCase();
+      if (!q) return this.allTags;
+      return this.allTags.filter(t => t.name.toLowerCase().includes(q));
+    },
+
+    openTagModal(c) {
+      this.tagModal = c;
+      this.tagSearch = '';
+    },
+
+    async toggleTag(c, tag) {
+      if (c.tags.includes(tag.id)) {
+        await fetch(`/api/contacts/${c.id}/tags/${tag.id}`, {
+          method: 'DELETE', headers: { 'Authorization': `Bearer ${TOKEN}` }
+        });
+        c.tags = c.tags.filter(id => id !== tag.id);
+      } else {
+        await fetch(`/api/contacts/${c.id}/tags/${tag.id}`, {
+          method: 'POST', headers: { 'Authorization': `Bearer ${TOKEN}` }
+        });
+        c.tags = [...c.tags, tag.id];
+      }
+    },
+
+    async blockContact(c) {
+      const url = c.isBlocked ? `/api/contacts/${c.id}/unblock` : `/api/contacts/${c.id}/block`;
+      const r = await fetch(url, { method: 'POST', headers: { 'Authorization': `Bearer ${TOKEN}` } });
+      if (r.ok) c.isBlocked = !c.isBlocked;
+    },
+
+    async deleteContact(c) {
+      if (!confirm(`Excluir o contato ${c.name || c.phone}? Esta ação não pode ser desfeita.`)) return;
+      const r = await fetch(`/api/contacts/${c.id}`, {
+        method: 'DELETE', headers: { 'Authorization': `Bearer ${TOKEN}` }
+      });
+      if (r.ok) this.contacts = this.contacts.filter(x => x.id !== c.id);
+    },
+
+    async incPurchase(c) {
+      const r = await fetch(`/api/contacts/${c.id}/purchase/increment`, {
+        method: 'POST', headers: { 'Authorization': `Bearer ${TOKEN}` }
+      });
+      if (r.ok) c.purchases++;
+    },
+
+    async decPurchase(c) {
+      if (c.purchases === 0) return;
+      const r = await fetch(`/api/contacts/${c.id}/purchase/decrement`, {
+        method: 'POST', headers: { 'Authorization': `Bearer ${TOKEN}` }
+      });
+      if (r.ok) c.purchases--;
+    }
+  };
+}
+</script>
+
+<div x-data="contactsPage()" x-init="init()" class="overflow-auto h-full">
+<div class="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-xl font-semibold text-gray-900">Contatos</h1>
+      <p class="text-sm text-gray-500 mt-0.5">Base de leads que interagiram pelo WhatsApp</p>
+    </div>
+    <div class="text-sm text-gray-400">
+      <span x-text="filtered.length"></span> contatos
+    </div>
+  </div>
+
+  <!-- Busca -->
+  <div class="relative mb-4">
+    <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+    </svg>
+    <input type="text" x-model="search" placeholder="Buscar por telefone, nome ou conexão..."
+      class="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+  </div>
+
+  <!-- Tabela -->
+  <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-gray-100 bg-gray-50 text-xs font-medium text-gray-500 uppercase tracking-wide">
+          <th class="px-5 py-3 text-left">Contato</th>
+          <th class="px-5 py-3 text-left">Tags</th>
+          <th class="px-5 py-3 text-left hidden md:table-cell">Conexão</th>
+          <th class="px-5 py-3 text-left hidden lg:table-cell">1º contato</th>
+          <th class="px-5 py-3 text-left hidden lg:table-cell">Último contato</th>
+          <th class="px-5 py-3 text-center">Compras</th>
+          <th class="px-5 py-3 text-right">Ações</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-if="filtered.length === 0">
+          <tr>
+            <td colspan="7" class="px-5 py-12 text-center text-gray-400 text-sm">
+              Nenhum contato encontrado
+            </td>
+          </tr>
+        </template>
+        <template x-for="c in filtered" :key="c.id">
+          <tr class="border-b border-gray-50 hover:bg-gray-50 transition-colors last:border-b-0"
+            :class="c.isBlocked ? 'opacity-50' : ''">
+            <td class="px-5 py-3.5">
+              <p class="font-medium text-gray-800" x-text="c.name || '—'"></p>
+              <p class="text-xs text-gray-400 font-mono mt-0.5" x-text="c.phone"></p>
+            </td>
+            <td class="px-5 py-3.5">
+              <div class="flex items-center gap-1 flex-wrap">
+                <template x-for="tagId in c.tags" :key="tagId">
+                  <template x-if="tagById(tagId)">
+                    <span class="text-xs px-2 py-0.5 rounded-full font-medium"
+                      :style="'background:' + tagById(tagId).color + '22; color:' + tagById(tagId).color"
+                      x-text="tagById(tagId).name"></span>
+                  </template>
+                </template>
+                <button @click="openTagModal(c)"
+                  class="text-xs text-gray-400 hover:text-blue-500 border border-dashed border-gray-300 hover:border-blue-400 rounded-full px-2 py-0.5 transition-colors">
+                  + tag
+                </button>
+              </div>
+            </td>
+            <td class="px-5 py-3.5 hidden md:table-cell">
+              <code class="text-xs bg-gray-100 text-gray-500 rounded px-1.5 py-0.5" x-text="c.instance"></code>
+            </td>
+            <td class="px-5 py-3.5 text-xs text-gray-400 hidden lg:table-cell" x-text="c.first || '—'"></td>
+            <td class="px-5 py-3.5 text-xs text-gray-400 hidden lg:table-cell" x-text="c.last || '—'"></td>
+            <td class="px-5 py-3.5">
+              <div class="flex items-center justify-center gap-2">
+                <button @click="decPurchase(c)"
+                  class="w-6 h-6 rounded-full border border-gray-200 text-gray-400 hover:bg-gray-100 flex items-center justify-center transition-colors"
+                  :class="c.purchases === 0 ? 'opacity-30 cursor-not-allowed' : ''">−</button>
+                <span class="w-6 text-center font-semibold text-gray-700" x-text="c.purchases"></span>
+                <button @click="incPurchase(c)"
+                  class="w-6 h-6 rounded-full border border-gray-200 text-gray-400 hover:bg-gray-100 flex items-center justify-center transition-colors">+</button>
+              </div>
+            </td>
+            <!-- Ações -->
+            <td class="px-5 py-3.5 text-right">
+              <div class="flex items-center justify-end gap-1.5">
+                <!-- Bloquear / Desbloquear -->
+                <button @click="blockContact(c)"
+                  class="text-xs border rounded-lg px-2.5 py-1.5 transition-colors font-medium"
+                  :class="c.isBlocked
+                    ? 'border-orange-200 text-orange-500 hover:bg-orange-50'
+                    : 'border-gray-200 text-gray-500 hover:bg-gray-100'"
+                  :title="c.isBlocked ? 'Desbloquear' : 'Bloquear'">
+                  <svg x-show="!c.isBlocked" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/>
+                  </svg>
+                  <svg x-show="c.isBlocked" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z"/>
+                  </svg>
+                </button>
+                <!-- Excluir -->
+                <button @click="deleteContact(c)"
+                  class="text-xs border border-red-100 text-red-400 rounded-lg px-2.5 py-1.5 hover:bg-red-50 hover:border-red-200 transition-colors"
+                  title="Excluir contato">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                  </svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<!-- Modal de tags -->
+<div x-show="tagModal !== null" x-cloak @click.self="tagModal = null"
+  class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">
+  <div class="bg-white rounded-xl border border-gray-200 shadow-xl p-5 w-full max-w-xs">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="text-sm font-semibold text-gray-800">Gerenciar tags</h3>
+      <button @click="tagModal = null" class="text-gray-400 hover:text-gray-600">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+    <p class="text-xs text-gray-400 mb-3" x-text="tagModal?.name || tagModal?.phone"></p>
+    <input type="text" x-model="tagSearch" placeholder="Buscar tag..."
+      class="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500">
+    <div class="space-y-1 max-h-60 overflow-y-auto">
+      <template x-if="allTags.length === 0">
+        <p class="text-xs text-gray-400 text-center py-4">Nenhuma tag criada ainda.<br>Vá em <a href="/tags" class="text-blue-500 underline">Tags</a> para criar.</p>
+      </template>
+      <template x-for="tag in filteredModalTags" :key="tag.id">
+        <button @click="tagModal && toggleTag(tagModal, tag)"
+          class="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-50 transition-colors text-left">
+          <span class="w-3 h-3 rounded-full flex-shrink-0" :style="'background:' + tag.color"></span>
+          <span class="flex-1 text-sm text-gray-700" x-text="tag.name"></span>
+          <svg x-show="tagModal && contactHasTag(tagModal, tag.id)"
+            class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+          </svg>
+        </button>
+      </template>
+    </div>
+  </div>
+</div>
+
+</div>
+{{ end }}

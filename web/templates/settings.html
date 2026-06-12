@@ -3,6 +3,55 @@
 {{ define "title" }}Configurações — BotWapp{{ end }}
 
 {{ define "content" }}
+
+<script>
+const MODELS = {
+  openai: [
+    { value: 'gpt-4o-mini', label: 'GPT-4o Mini — rápido e barato (recomendado)' },
+    { value: 'gpt-4o', label: 'GPT-4o — mais capaz' },
+    { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
+    { value: 'gpt-4.1', label: 'GPT-4.1' },
+    { value: 'o3-mini', label: 'o3-mini — raciocínio avançado' },
+  ],
+  groq: [
+    { value: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B Versatile (recomendado)' },
+    { value: 'llama-3.1-8b-instant', label: 'Llama 3.1 8B Instant — mais rápido' },
+    { value: 'mixtral-8x7b-32768', label: 'Mixtral 8x7B' },
+    { value: 'gemma2-9b-it', label: 'Gemma 2 9B' },
+  ],
+};
+
+function updateModels(selectId, provider, currentModel) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  sel.innerHTML = '';
+  const list = MODELS[provider] || [];
+  list.forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m.value;
+    opt.textContent = m.label;
+    if (m.value === currentModel) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  // Se modelo atual não está na lista, selecionar o primeiro
+  if (currentModel && !list.find(m => m.value === currentModel)) {
+    sel.value = list[0]?.value || '';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const convProv = document.getElementById('conv_provider');
+  const convModel = '{{ .ConvModel }}';
+  updateModels('conv_model', convProv?.value || 'openai', convModel);
+  convProv?.addEventListener('change', () => updateModels('conv_model', convProv.value, ''));
+
+  const analysisProv = document.getElementById('analysis_provider');
+  const analysisModel = '{{ .AnalysisModel }}';
+  updateModels('analysis_model', analysisProv?.value || 'openai', analysisModel);
+  analysisProv?.addEventListener('change', () => updateModels('analysis_model', analysisProv.value, ''));
+});
+</script>
+
 <div class="h-full overflow-y-auto bg-gray-100">
   <div class="max-w-2xl mx-auto px-4 py-8">
 
@@ -19,103 +68,118 @@
 
     <form method="POST" action="/settings">
       <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
-
-        <!-- Seção Transcrição -->
         <div class="px-5 py-4 border-b border-gray-100">
           <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wider">Transcrição de Áudio</h2>
         </div>
-
-        <div class="px-5 py-5 space-y-5">
+        <div class="px-5 py-5">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">
-              Chave da API Groq
-            </label>
-            <input
-              type="password"
-              name="groq_api_key"
-              value="{{ .GroqKey }}"
-              placeholder="gsk_..."
+            <label class="block text-sm font-medium text-gray-700 mb-1">Chave da API Groq</label>
+            <input type="password" name="groq_api_key" value="{{ .GroqKey }}" placeholder="gsk_..."
               autocomplete="off"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
-            />
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"/>
             <p class="mt-1.5 text-xs text-gray-500">
-              Quando configurado, a transcrição usa Groq (mais rápido). Se vazio ou se falhar, usa o Whisper local da VPS.
+              Quando configurado, usa Groq (mais rápido). Sem chave, usa Whisper local.
             </p>
           </div>
         </div>
-
       </div>
 
       <div class="mt-4 flex justify-end">
         <button type="submit"
           class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
-          Salvar configurações
+          Salvar
         </button>
       </div>
     </form>
 
     {{ if or (eq .Role "admin") (eq .Role "super_admin") }}
+
+    <!-- Agente Conversacional -->
     <form method="POST" action="/settings" class="mt-6">
       <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
-
-        <!-- Seção Agente de IA -->
         <div class="px-5 py-4 border-b border-gray-100">
-          <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wider">Agente de IA</h2>
-          <p class="text-xs text-gray-500 mt-0.5">Provedor de inteligência artificial para respostas automáticas</p>
+          <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wider">Agente Conversacional</h2>
+          <p class="text-xs text-gray-500 mt-0.5">IA usada para responder mensagens automaticamente nas conexões</p>
         </div>
+        <div class="px-5 py-5 space-y-4">
 
-        <div class="px-5 py-5 space-y-5">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">
-              Provedor
-            </label>
-            <select
-              name="ai_provider"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="openai" {{ if eq .AIProvider "openai" }}selected{{ end }}>OpenAI</option>
-              <option value="groq" {{ if eq .AIProvider "groq" }}selected{{ end }}>Groq</option>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Provedor</label>
+            <select name="conv_provider" id="conv_provider"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="openai" {{ if eq .ConvProvider "openai" }}selected{{ end }}>OpenAI</option>
+              <option value="groq" {{ if eq .ConvProvider "groq" }}selected{{ end }}>Groq</option>
             </select>
           </div>
 
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">
-              Modelo
-            </label>
-            <input
-              type="text"
-              name="ai_model"
-              value="{{ .AIModel }}"
-              placeholder="ex: gpt-4o-mini (OpenAI) ou llama-3.3-70b-versatile (Groq)"
-              autocomplete="off"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
+            <label class="block text-sm font-medium text-gray-700 mb-1">Modelo</label>
+            <select name="conv_model" id="conv_model"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <!-- preenchido por JS -->
+            </select>
           </div>
 
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">
-              Chave API
-            </label>
-            <input
-              type="password"
-              name="ai_api_key"
-              value="{{ .AIApiKey }}"
-              placeholder="Chave API"
+            <label class="block text-sm font-medium text-gray-700 mb-1">Chave API</label>
+            <input type="password" name="conv_api_key" value="{{ .ConvApiKey }}" placeholder="Chave API"
               autocomplete="off"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
-            />
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"/>
           </div>
+
         </div>
-
       </div>
-
       <div class="mt-4 flex justify-end">
         <button type="submit"
           class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
-          Salvar configurações de IA
+          Salvar agente conversacional
         </button>
       </div>
     </form>
+
+    <!-- Agente de Análise -->
+    <form method="POST" action="/settings" class="mt-6">
+      <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div class="px-5 py-4 border-b border-gray-100">
+          <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wider">Agente de Análise</h2>
+          <p class="text-xs text-gray-500 mt-0.5">IA usada para análise de contexto, scoring e ações automáticas em background</p>
+        </div>
+        <div class="px-5 py-5 space-y-4">
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Provedor</label>
+            <select name="analysis_provider" id="analysis_provider"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="openai" {{ if eq .AnalysisProvider "openai" }}selected{{ end }}>OpenAI</option>
+              <option value="groq" {{ if eq .AnalysisProvider "groq" }}selected{{ end }}>Groq</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Modelo</label>
+            <select name="analysis_model" id="analysis_model"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <!-- preenchido por JS -->
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Chave API</label>
+            <input type="password" name="analysis_api_key" value="{{ .AnalysisApiKey }}" placeholder="Chave API"
+              autocomplete="off"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"/>
+          </div>
+
+        </div>
+      </div>
+      <div class="mt-4 flex justify-end">
+        <button type="submit"
+          class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
+          Salvar agente de análise
+        </button>
+      </div>
+    </form>
+
     {{ end }}
 
   </div>

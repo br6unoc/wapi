@@ -1,0 +1,523 @@
+{{ template "layout.html" . }}
+{{ define "title" }}Campanhas — BotWapp{{ end }}
+{{ define "content" }}
+
+<script>
+const TOKEN = document.querySelector('meta[name="auth-token"]')?.content || '';
+const ROLE    = '{{ .Role }}';
+const USER_ID = '{{ .UserID }}';
+
+const INSTANCES = {{ if .Instances }}[{{ range .Instances }}{ id:'{{ .ID }}', name:'{{ .Name }}' },{{ end }}]{{ else }}[]{{ end }};
+const SECTORS   = {{ if .Sectors }}[{{ range .Sectors }}{ id:'{{ .ID }}', name:'{{ .Name }}' },{{ end }}]{{ else }}[]{{ end }};
+const USERS     = {{ if .Users }}[{{ range .Users }}{ id:'{{ .ID }}', name:'{{ .Username }}' },{{ end }}]{{ else }}[]{{ end }};
+
+function campaignsPage() {
+  return {
+    tab: 'list',
+    listTab: 'running',
+    instances: INSTANCES,
+
+    campaigns: {{ if .Campaigns }}[{{ range .Campaigns }}{
+      id: '{{ .ID }}',
+      name: {{ printf "%q" .Name }},
+      status: '{{ .Status }}',
+      instance: '{{ .InstanceName }}',
+      audience_type: '{{ .AudienceType }}',
+      total: {{ .TotalContacts }},
+      sent: {{ .SentCount }},
+      failed: {{ .FailedCount }},
+      scheduled_at: '{{ .ScheduledAt }}',
+    },{{ end }}]{{ else }}[]{{ end }},
+
+    get agendadas()   { return this.campaigns.filter(c => c.status === 'scheduled') },
+    get emAndamento() { return this.campaigns.filter(c => c.status === 'running') },
+    get finalizadas() { return this.campaigns.filter(c => c.status === 'finished') },
+
+    progress(c) {
+      if (!c.total) return 0;
+      return Math.round((c.sent / c.total) * 100);
+    },
+
+    audienceLabel(c) {
+      const map = { all: 'Toda a base', sector: 'Por setor', user: 'Por consultor', mine: 'Minha carteira', manual: 'Lista manual' };
+      return map[c.audience_type] || c.audience_type;
+    },
+
+    // ── Tags (loaded async) ──
+    allTags: [],
+    async loadTags() {
+      const r = await fetch('/api/tags', { headers: { 'Authorization': `Bearer ${TOKEN}` } });
+      if (r.ok) this.allTags = await r.json();
+    },
+
+    // ── Form ──
+    form: {
+      name: '',
+      instance_id: '',
+      message: '',
+      audience_type: (ROLE === 'admin' || ROLE === 'super_admin' || ROLE === 'coordinator') ? 'all' : 'mine',
+      audience_ref: '',
+      filters: {
+        date_from: '',
+        date_to: '',
+        tag_ids: [],
+        inactive_days: 0,
+        min_purchases: -1,
+        max_purchases: -1,
+        manual_phones: '',
+      },
+      schedule_type: 'now',
+      scheduled_at: '',
+    },
+    saving: false,
+    saveError: '',
+
+    isAdmin() { return ROLE === 'admin' || ROLE === 'super_admin' || ROLE === 'coordinator'; },
+    isManual() { return this.form.audience_type === 'manual'; },
+
+    toggleTag(tagId) {
+      const idx = this.form.filters.tag_ids.indexOf(tagId);
+      if (idx >= 0) this.form.filters.tag_ids.splice(idx, 1);
+      else this.form.filters.tag_ids.push(tagId);
+    },
+    hasTag(tagId) { return this.form.filters.tag_ids.includes(tagId); },
+
+    manualCount() {
+      return this.form.filters.manual_phones.split('\n').map(l => l.trim()).filter(Boolean).length;
+    },
+
+    async init() { await this.loadTags(); },
+
+    async submitCampaign() {
+      this.saving = true;
+      this.saveError = '';
+      try {
+        const payload = { ...this.form };
+        // Clean up unused filters
+        if (this.isManual()) {
+          payload.audience_ref = '';
+        }
+        const r = await fetch('/api/campaigns', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await r.json();
+        if (!r.ok) { this.saveError = data.error || 'Erro ao criar campanha'; return; }
+        window.location.href = '/campaigns';
+      } catch(e) {
+        this.saveError = 'Erro de conexão';
+      } finally {
+        this.saving = false;
+      }
+    },
+
+    async deleteCampaign(id) {
+      if (!confirm('Excluir campanha agendada?')) return;
+      const r = await fetch(`/api/campaigns/${id}`, {
+        method: 'DELETE', headers: { 'Authorization': `Bearer ${TOKEN}` }
+      });
+      if (r.ok) this.campaigns = this.campaigns.filter(c => c.id !== id);
+    },
+  };
+}
+</script>
+
+<div x-data="campaignsPage()" x-init="init()" class="overflow-auto h-full">
+<div class="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-xl font-semibold text-gray-900">Campanhas</h1>
+      <p class="text-sm text-gray-500 mt-0.5">Envie mensagens em massa para listas de contatos</p>
+    </div>
+    <button @click="tab = 'new'" x-show="tab === 'list'"
+      class="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-700 transition-colors">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+      </svg>
+      Nova campanha
+    </button>
+    <button @click="tab = 'list'" x-show="tab === 'new'"
+      class="flex items-center gap-2 border border-gray-300 text-gray-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+      </svg>
+      Voltar
+    </button>
+  </div>
+
+  <!-- ===================== LISTA ===================== -->
+  <div x-show="tab === 'list'">
+
+    <div class="flex gap-1 bg-gray-100 p-1 rounded-xl mb-6 w-fit">
+      <button @click="listTab = 'running'"
+        class="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all"
+        :class="listTab === 'running' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'">
+        <span class="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+        Em andamento
+        <span class="text-xs font-semibold rounded-full px-1.5 py-0.5"
+          :class="listTab === 'running' ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-500'"
+          x-text="emAndamento.length"></span>
+      </button>
+      <button @click="listTab = 'scheduled'"
+        class="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all"
+        :class="listTab === 'scheduled' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'">
+        <span class="w-2 h-2 rounded-full bg-yellow-400"></span>
+        Agendadas
+        <span class="text-xs font-semibold rounded-full px-1.5 py-0.5"
+          :class="listTab === 'scheduled' ? 'bg-yellow-100 text-yellow-600' : 'bg-gray-200 text-gray-500'"
+          x-text="agendadas.length"></span>
+      </button>
+      <button @click="listTab = 'finished'"
+        class="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all"
+        :class="listTab === 'finished' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'">
+        <span class="w-2 h-2 rounded-full bg-green-500"></span>
+        Finalizadas
+        <span class="text-xs font-semibold rounded-full px-1.5 py-0.5"
+          :class="listTab === 'finished' ? 'bg-green-100 text-green-600' : 'bg-gray-200 text-gray-500'"
+          x-text="finalizadas.length"></span>
+      </button>
+    </div>
+
+    <!-- Em andamento -->
+    <div x-show="listTab === 'running'">
+      <div x-show="emAndamento.length === 0" class="bg-white rounded-xl border border-gray-200 px-5 py-8 text-center text-sm text-gray-400">Nenhuma campanha em andamento</div>
+      <div x-show="emAndamento.length > 0" class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <template x-for="c in emAndamento" :key="c.id">
+          <div class="px-5 py-4 border-b border-gray-50 last:border-b-0">
+            <div class="flex items-center justify-between gap-4">
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2 mb-1">
+                  <p class="font-medium text-gray-800 truncate" x-text="c.name"></p>
+                  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+                    <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>Enviando
+                  </span>
+                </div>
+                <div class="flex items-center gap-3 text-xs text-gray-400 flex-wrap">
+                  <code class="bg-gray-100 text-gray-500 rounded px-1.5 py-0.5" x-text="c.instance"></code>
+                  <span>·</span>
+                  <span x-text="audienceLabel(c)"></span>
+                  <span>·</span>
+                  <span><span class="text-gray-600 font-medium" x-text="c.sent"></span> de <span x-text="c.total"></span></span>
+                  <span x-show="c.failed > 0" class="text-red-400">· <span x-text="c.failed"></span> falhas</span>
+                </div>
+                <div class="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden w-full max-w-xs">
+                  <div class="h-full bg-blue-500 rounded-full transition-all" :style="'width:' + progress(c) + '%'"></div>
+                </div>
+              </div>
+              <span class="text-sm font-semibold text-blue-600 flex-shrink-0" x-text="progress(c) + '%'"></span>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- Agendadas -->
+    <div x-show="listTab === 'scheduled'">
+      <div x-show="agendadas.length === 0" class="bg-white rounded-xl border border-gray-200 px-5 py-8 text-center text-sm text-gray-400">Nenhuma campanha agendada</div>
+      <div x-show="agendadas.length > 0" class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <template x-for="c in agendadas" :key="c.id">
+          <div class="px-5 py-4 border-b border-gray-50 last:border-b-0">
+            <div class="flex items-center justify-between gap-4">
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2 mb-1">
+                  <p class="font-medium text-gray-800 truncate" x-text="c.name"></p>
+                  <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700">Agendada</span>
+                </div>
+                <div class="flex items-center gap-3 text-xs text-gray-400 flex-wrap">
+                  <code class="bg-gray-100 text-gray-500 rounded px-1.5 py-0.5" x-text="c.instance"></code>
+                  <span>·</span><span x-text="audienceLabel(c)"></span>
+                  <span>·</span><span x-text="c.scheduled_at || '—'"></span>
+                  <span>·</span><span x-text="c.total"></span> contatos
+                </div>
+              </div>
+              <button @click="deleteCampaign(c.id)"
+                class="text-xs border border-red-100 text-red-400 rounded-lg px-2.5 py-1.5 hover:bg-red-50 flex-shrink-0">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- Finalizadas -->
+    <div x-show="listTab === 'finished'">
+      <div x-show="finalizadas.length === 0" class="bg-white rounded-xl border border-gray-200 px-5 py-8 text-center text-sm text-gray-400">Nenhuma campanha finalizada</div>
+      <div x-show="finalizadas.length > 0" class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-gray-100 bg-gray-50 text-xs font-medium text-gray-500 uppercase tracking-wide">
+              <th class="px-5 py-3 text-left">Nome</th>
+              <th class="px-5 py-3 text-left hidden sm:table-cell">Conexão</th>
+              <th class="px-5 py-3 text-left hidden md:table-cell">Audiência</th>
+              <th class="px-5 py-3 text-center">Enviados</th>
+              <th class="px-5 py-3 text-center">Falhas</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="c in finalizadas" :key="c.id">
+              <tr class="border-b border-gray-50 hover:bg-gray-50 last:border-b-0">
+                <td class="px-5 py-3.5 font-medium text-gray-800" x-text="c.name"></td>
+                <td class="px-5 py-3.5 hidden sm:table-cell"><code class="text-xs bg-gray-100 text-gray-500 rounded px-1.5 py-0.5" x-text="c.instance"></code></td>
+                <td class="px-5 py-3.5 text-xs text-gray-400 hidden md:table-cell" x-text="audienceLabel(c)"></td>
+                <td class="px-5 py-3.5 text-center">
+                  <span class="text-green-600 font-semibold" x-text="c.sent"></span>
+                  <span class="text-gray-300 text-xs"> / <span class="text-gray-400" x-text="c.total"></span></span>
+                </td>
+                <td class="px-5 py-3.5 text-center">
+                  <span x-show="c.failed > 0" class="text-red-400 font-medium text-xs" x-text="c.failed"></span>
+                  <span x-show="c.failed === 0" class="text-gray-300 text-xs">—</span>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div><!-- /list -->
+
+  <!-- ===================== NOVA CAMPANHA ===================== -->
+  <div x-show="tab === 'new'" x-cloak>
+    <form @submit.prevent="submitCampaign()" class="space-y-6">
+
+      <!-- Básico -->
+      <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-5">
+        <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide">Informações básicas</h2>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Nome da campanha</label>
+          <input type="text" x-model="form.name" placeholder="ex: Promoção de Julho" required
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Conexão (WhatsApp)</label>
+          <select x-model="form.instance_id" required
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+            <option value="">Selecione uma conexão...</option>
+            <template x-for="i in instances" :key="i.id">
+              <option :value="i.id" x-text="i.name"></option>
+            </template>
+          </select>
+          <p x-show="instances.length === 0" class="text-xs text-yellow-600 mt-1">Nenhuma conexão online. Conecte um WhatsApp primeiro.</p>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Mensagem</label>
+          <textarea x-model="form.message" rows="5" required
+            placeholder="Olá {{ "{{nome}}" }}, temos uma novidade especial para você..."
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"></textarea>
+          <p class="text-xs text-gray-400 mt-1">Use <code class="bg-gray-100 px-1 rounded">{{ "{{nome}}" }}</code> para personalizar com o nome do contato</p>
+        </div>
+      </div>
+
+      <!-- Audiência -->
+      <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-4">
+        <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide">Audiência</h2>
+
+        <div class="space-y-2">
+          <!-- Toda a base -->
+          <template x-if="isAdmin()">
+            <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors"
+              :class="form.audience_type === 'all' ? 'border-blue-400 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'">
+              <input type="radio" x-model="form.audience_type" value="all" class="mt-0.5 accent-blue-600">
+              <div><p class="text-sm font-medium text-gray-800">Toda a base</p><p class="text-xs text-gray-400">Todos os contatos da empresa</p></div>
+            </label>
+          </template>
+
+          <!-- Por setor -->
+          <template x-if="isAdmin() && $el.closest('[x-data]').__x.$data.sectors?.length > 0 || false">
+            <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer"
+              :class="form.audience_type === 'sector' ? 'border-blue-400 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'">
+              <input type="radio" x-model="form.audience_type" value="sector" class="mt-0.5 accent-blue-600">
+              <div class="flex-1">
+                <p class="text-sm font-medium text-gray-800">Por setor</p>
+                <select x-show="form.audience_type === 'sector'" x-model="form.audience_ref"
+                  class="mt-2 w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <option value="">Selecione o setor...</option>
+                  {{ range .Sectors }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}
+                </select>
+              </div>
+            </label>
+          </template>
+
+          <!-- Por consultor -->
+          <template x-if="isAdmin()">
+            <div>
+              {{ if .Sectors }}
+              <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer"
+                :class="form.audience_type === 'sector' ? 'border-blue-400 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'">
+                <input type="radio" x-model="form.audience_type" value="sector" class="mt-0.5 accent-blue-600">
+                <div class="flex-1">
+                  <p class="text-sm font-medium text-gray-800">Por setor</p>
+                  <select x-show="form.audience_type === 'sector'" x-model="form.audience_ref"
+                    class="mt-2 w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="">Selecione o setor...</option>
+                    {{ range .Sectors }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}
+                  </select>
+                </div>
+              </label>
+              {{ end }}
+              {{ if .Users }}
+              <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer mt-2"
+                :class="form.audience_type === 'user' ? 'border-blue-400 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'">
+                <input type="radio" x-model="form.audience_type" value="user" class="mt-0.5 accent-blue-600">
+                <div class="flex-1">
+                  <p class="text-sm font-medium text-gray-800">Por consultor</p>
+                  <select x-show="form.audience_type === 'user'" x-model="form.audience_ref"
+                    class="mt-2 w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="">Selecione o consultor...</option>
+                    {{ range .Users }}<option value="{{ .ID }}">{{ .Username }}</option>{{ end }}
+                  </select>
+                </div>
+              </label>
+              {{ end }}
+            </div>
+          </template>
+
+          <!-- Minha carteira -->
+          <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer"
+            :class="form.audience_type === 'mine' ? 'border-blue-400 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'">
+            <input type="radio" x-model="form.audience_type" value="mine" class="mt-0.5 accent-blue-600">
+            <div><p class="text-sm font-medium text-gray-800">Minha carteira</p><p class="text-xs text-gray-400">Apenas os contatos atribuídos a você</p></div>
+          </label>
+
+          <!-- Lista manual -->
+          <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer"
+            :class="form.audience_type === 'manual' ? 'border-blue-400 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'">
+            <input type="radio" x-model="form.audience_type" value="manual" class="mt-0.5 accent-blue-600">
+            <div class="flex-1">
+              <p class="text-sm font-medium text-gray-800">Lista manual</p>
+              <p class="text-xs text-gray-400 mb-2">Cole os números diretamente, um por linha</p>
+              <template x-if="form.audience_type === 'manual'">
+                <div>
+                  <textarea x-model="form.filters.manual_phones" rows="6"
+                    placeholder="5511999990001&#10;5511999990002&#10;5511999990003"
+                    class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"></textarea>
+                  <p class="text-xs text-gray-400 mt-1"><span x-text="manualCount()"></span> números · Formato: DDI+DDD+número (ex: 5511999990001)</p>
+                </div>
+              </template>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <!-- Filtros adicionais (apenas quando não for manual) -->
+      <div x-show="!isManual()" class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-5">
+        <div class="flex items-center justify-between">
+          <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide">Filtros adicionais</h2>
+          <span class="text-xs text-gray-400">Todos opcionais — combinados com AND</span>
+        </div>
+
+        <!-- Intervalo de entrada do lead -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">Entrada do lead</label>
+          <div class="flex items-center gap-2">
+            <div class="flex-1">
+              <p class="text-xs text-gray-400 mb-1">De</p>
+              <input type="date" x-model="form.filters.date_from"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div class="flex-1">
+              <p class="text-xs text-gray-400 mb-1">Até</p>
+              <input type="date" x-model="form.filters.date_to"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+          </div>
+        </div>
+
+        <!-- Tags -->
+        <div x-show="allTags.length > 0">
+          <label class="block text-sm font-medium text-gray-700 mb-2">Tags</label>
+          <div class="flex flex-wrap gap-2">
+            <template x-for="tag in allTags" :key="tag.id">
+              <button type="button" @click="toggleTag(tag.id)"
+                class="text-xs px-3 py-1.5 rounded-full border font-medium transition-all"
+                :style="hasTag(tag.id)
+                  ? 'background:' + tag.color + '; color:#fff; border-color:' + tag.color
+                  : 'background:' + tag.color + '22; color:' + tag.color + '; border-color:' + tag.color + '44'"
+                x-text="tag.name"></button>
+            </template>
+          </div>
+          <p class="text-xs text-gray-400 mt-1">Selecione uma ou mais tags — contatos que têm <strong>todas</strong> as tags selecionadas</p>
+        </div>
+
+        <!-- Último contato (inatividade) -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Inatividade</label>
+          <div class="flex items-center gap-2">
+            <input type="number" x-model.number="form.filters.inactive_days" min="0" placeholder="0"
+              class="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <span class="text-sm text-gray-500">dias sem contato (0 = ignorar)</span>
+          </div>
+          <p class="text-xs text-gray-400 mt-1">Ex: 30 → contatos que não interagem há mais de 30 dias</p>
+        </div>
+
+        <!-- Contagem de compras -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">Compras</label>
+          <div class="flex items-center gap-3">
+            <div>
+              <p class="text-xs text-gray-400 mb-1">Mínimo</p>
+              <input type="number" x-model.number="form.filters.min_purchases" min="-1" placeholder="-1"
+                class="w-20 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div>
+              <p class="text-xs text-gray-400 mb-1">Máximo</p>
+              <input type="number" x-model.number="form.filters.max_purchases" min="-1" placeholder="-1"
+                class="w-20 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+            <p class="text-xs text-gray-400 mt-4">-1 = sem limite</p>
+          </div>
+          <p class="text-xs text-gray-400 mt-1">Ex: mín 0 máx 0 → contatos que nunca compraram</p>
+        </div>
+      </div>
+
+      <!-- Envio -->
+      <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-5">
+        <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide">Envio</h2>
+
+        <div class="flex gap-4">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="radio" x-model="form.schedule_type" value="now" class="accent-blue-600">
+            <span class="text-sm text-gray-700">Enviar agora</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="radio" x-model="form.schedule_type" value="scheduled" class="accent-blue-600">
+            <span class="text-sm text-gray-700">Agendar</span>
+          </label>
+        </div>
+
+        <div x-show="form.schedule_type === 'scheduled'" x-cloak>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Data e hora</label>
+          <input type="datetime-local" x-model="form.scheduled_at"
+            class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+
+        <div x-show="saveError" class="text-sm text-red-500 bg-red-50 border border-red-100 rounded-lg px-3 py-2" x-text="saveError"></div>
+
+        <div class="flex gap-3 pt-2">
+          <button type="button" @click="tab = 'list'"
+            class="border border-gray-300 text-gray-600 rounded-lg px-5 py-2.5 text-sm hover:bg-gray-50 font-medium">
+            Cancelar
+          </button>
+          <button type="submit" :disabled="saving"
+            class="bg-blue-600 text-white rounded-lg px-5 py-2.5 text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-60">
+            <span x-show="!saving" x-text="form.schedule_type === 'now' ? 'Criar e enviar' : 'Agendar campanha'"></span>
+            <span x-show="saving">Criando...</span>
+          </button>
+        </div>
+      </div>
+
+    </form>
+  </div><!-- /new -->
+
+</div>
+</div>
+{{ end }}

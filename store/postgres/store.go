@@ -144,6 +144,14 @@ func Migrate() error {
 		log.Printf("[MIGRATE] Aviso ao adicionar is_first_contact: %v", err)
 	}
 
+	// Refactor: agentes são templates reutilizáveis; instâncias têm FKs para agentes
+	DB.Exec(`ALTER TABLE agents DROP CONSTRAINT IF EXISTS agents_instance_id_contact_type_key`)
+	DB.Exec(`ALTER TABLE agents DROP CONSTRAINT IF EXISTS agents_contact_type_check`)
+	DB.Exec(`ALTER TABLE agents DROP COLUMN IF EXISTS instance_id`)
+	DB.Exec(`ALTER TABLE agents DROP COLUMN IF EXISTS contact_type`)
+	DB.Exec(`ALTER TABLE instances ADD COLUMN IF NOT EXISTS first_contact_agent_id UUID REFERENCES agents(id) ON DELETE SET NULL`)
+	DB.Exec(`ALTER TABLE instances ADD COLUMN IF NOT EXISTS returning_agent_id UUID REFERENCES agents(id) ON DELETE SET NULL`)
+
 	// Setores e atribuições de usuários
 	DB.Exec(`
 		CREATE TABLE IF NOT EXISTS sectors (
@@ -168,6 +176,80 @@ func Migrate() error {
 			PRIMARY KEY (user_id, instance_id)
 		)
 	`)
+
+	DB.Exec(`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS conv_status VARCHAR(20) NOT NULL DEFAULT 'open'`)
+	DB.Exec(`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS assigned_user_id UUID REFERENCES users(id) ON DELETE SET NULL`)
+	DB.Exec(`CREATE INDEX IF NOT EXISTS idx_contacts_conv_status ON contacts (conv_status)`)
+	DB.Exec(`CREATE INDEX IF NOT EXISTS idx_contacts_assigned ON contacts (assigned_user_id)`)
+
+	DB.Exec(`
+		CREATE TABLE IF NOT EXISTS instance_sectors (
+			instance_id UUID NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+			sector_id UUID NOT NULL REFERENCES sectors(id) ON DELETE CASCADE,
+			PRIMARY KEY (instance_id, sector_id)
+		)
+	`)
+
+	DB.Exec(`
+		CREATE TABLE IF NOT EXISTS contact_tags (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+			name VARCHAR(100) NOT NULL,
+			color VARCHAR(7) NOT NULL DEFAULT '#6366f1',
+			created_at TIMESTAMP DEFAULT NOW(),
+			UNIQUE(company_id, name)
+		)
+	`)
+	DB.Exec(`
+		CREATE TABLE IF NOT EXISTS contact_tag_links (
+			contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+			tag_id UUID NOT NULL REFERENCES contact_tags(id) ON DELETE CASCADE,
+			PRIMARY KEY (contact_id, tag_id)
+		)
+	`)
+	DB.Exec(`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN NOT NULL DEFAULT FALSE`)
+	DB.Exec(`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS last_contact_at TIMESTAMP`)
+	DB.Exec(`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS purchase_count INTEGER NOT NULL DEFAULT 0`)
+	DB.Exec(`CREATE INDEX IF NOT EXISTS idx_contacts_last_contact ON contacts (last_contact_at)`)
+	DB.Exec(`CREATE INDEX IF NOT EXISTS idx_contacts_instance_created ON contacts (instance_id, created_at)`)
+
+	DB.Exec(`
+		CREATE TABLE IF NOT EXISTS campaigns (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+			created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			name VARCHAR(255) NOT NULL,
+			message TEXT NOT NULL,
+			instance_id UUID NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+			audience_type VARCHAR(20) NOT NULL DEFAULT 'all',
+			audience_ref UUID,
+			schedule_type VARCHAR(20) NOT NULL DEFAULT 'now',
+			scheduled_at TIMESTAMP,
+			status VARCHAR(20) NOT NULL DEFAULT 'draft',
+			total_contacts INTEGER NOT NULL DEFAULT 0,
+			sent_count INTEGER NOT NULL DEFAULT 0,
+			failed_count INTEGER NOT NULL DEFAULT 0,
+			created_at TIMESTAMP DEFAULT NOW(),
+			started_at TIMESTAMP,
+			finished_at TIMESTAMP
+		)
+	`)
+	DB.Exec(`
+		CREATE TABLE IF NOT EXISTS campaign_contacts (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			campaign_id UUID NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+			contact_id UUID REFERENCES contacts(id) ON DELETE SET NULL,
+			phone VARCHAR(50) NOT NULL,
+			name VARCHAR(255) NOT NULL DEFAULT '',
+			status VARCHAR(20) NOT NULL DEFAULT 'pending',
+			sent_at TIMESTAMP,
+			error_msg TEXT NOT NULL DEFAULT '',
+			UNIQUE(campaign_id, phone)
+		)
+	`)
+	DB.Exec(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS filters JSONB NOT NULL DEFAULT '{}'`)
+	DB.Exec(`CREATE INDEX IF NOT EXISTS idx_campaigns_company ON campaigns (company_id, created_at DESC)`)
+	DB.Exec(`CREATE INDEX IF NOT EXISTS idx_campaign_contacts_status ON campaign_contacts (campaign_id, status)`)
 
 	if err := migrateToMultiTenant(); err != nil {
 		log.Printf("[MIGRATE] Aviso na migração multi-tenant: %v", err)
@@ -248,6 +330,42 @@ func SetSetting(key, value string) error {
 	return err
 }
 
+type ContactBasic struct {
+	ID           string
+	Phone        string
+	InstanceName string
+}
+
+func GetContactBasic(contactID string) (ContactBasic, error) {
+	var c ContactBasic
+	err := DB.QueryRow(`
+		SELECT ct.id, ct.phone, i.name
+		FROM contacts ct JOIN instances i ON i.id = ct.instance_id
+		WHERE ct.id = $1
+	`, contactID).Scan(&c.ID, &c.Phone, &c.InstanceName)
+	return c, err
+}
+
+func SetContactBlocked(contactID string, blocked bool) error {
+	_, err := DB.Exec(`UPDATE contacts SET is_blocked = $1 WHERE id = $2`, blocked, contactID)
+	return err
+}
+
+func DeleteContact(contactID string) error {
+	_, err := DB.Exec(`DELETE FROM contacts WHERE id = $1`, contactID)
+	return err
+}
+
+func IncrementContactPurchase(contactID string) error {
+	_, err := DB.Exec(`UPDATE contacts SET purchase_count = purchase_count + 1 WHERE id = $1`, contactID)
+	return err
+}
+
+func DecrementContactPurchase(contactID string) error {
+	_, err := DB.Exec(`UPDATE contacts SET purchase_count = GREATEST(0, purchase_count - 1) WHERE id = $1`, contactID)
+	return err
+}
+
 func GetCompanySetting(companyID, key string) (string, error) {
 	return GetSetting(companyID + ":" + key)
 }
@@ -255,3 +373,4 @@ func GetCompanySetting(companyID, key string) (string, error) {
 func SetCompanySetting(companyID, key, value string) error {
 	return SetSetting(companyID+":"+key, value)
 }
+

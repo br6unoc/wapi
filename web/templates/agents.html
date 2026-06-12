@@ -4,22 +4,20 @@
 
 <script>
 const TOKEN = document.querySelector('meta[name="auth-token"]')?.content || '';
-const INSTANCES = [{{ range .Instances }}{ id: "{{ .ID }}", name: "{{ .Name }}" },{{ end }}];
 
 function agentsPage() {
   return {
     agents: [],
-    instances: INSTANCES,
     loading: true,
 
     showCreate: false,
     creating: false,
-    createForm: { name: '', instance_id: '', contact_type: 'first_contact', prompt: '', handoff_keyword: 'PRECISO_DE_HUMANO', is_active: true },
+    createForm: { name: '', prompt: '', handoff_keyword: 'PRECISO_DE_HUMANO', is_active: true },
     createError: '',
 
     showEdit: false,
     editing: false,
-    editForm: { id: '', name: '', instance_id: '', contact_type: 'first_contact', prompt: '', handoff_keyword: '', is_active: true },
+    editForm: { id: '', name: '', prompt: '', handoff_keyword: '', is_active: true },
     editError: '',
 
     async init() {
@@ -37,13 +35,13 @@ function agentsPage() {
     },
 
     openCreate() {
-      this.createForm = { name: '', instance_id: '', contact_type: 'first_contact', prompt: '', handoff_keyword: 'PRECISO_DE_HUMANO', is_active: true };
+      this.createForm = { name: '', prompt: '', handoff_keyword: 'PRECISO_DE_HUMANO', is_active: true };
       this.createError = '';
       this.showCreate = true;
     },
 
     async submitCreate() {
-      if (!this.createForm.name || !this.createForm.instance_id || !this.createForm.prompt) return;
+      if (!this.createForm.name || !this.createForm.prompt) return;
       this.creating = true;
       this.createError = '';
       try {
@@ -52,7 +50,6 @@ function agentsPage() {
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${TOKEN}` },
           body: JSON.stringify(this.createForm)
         });
-        if (r.status === 409) { this.createError = 'Já existe um agente deste tipo para esta conexão'; return; }
         if (!r.ok) { this.createError = 'Erro ao criar agente'; return; }
         const agent = await r.json();
         this.agents.push(agent);
@@ -77,7 +74,6 @@ function agentsPage() {
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${TOKEN}` },
           body: JSON.stringify(this.editForm)
         });
-        if (r.status === 409) { this.editError = 'Já existe um agente deste tipo para esta conexão'; return; }
         if (!r.ok) { this.editError = 'Erro ao atualizar agente'; return; }
         const updated = await r.json();
         const idx = this.agents.findIndex(a => a.id === updated.id);
@@ -107,7 +103,7 @@ function agentsPage() {
   <div class="flex items-center justify-between mb-6">
     <div>
       <h1 class="text-xl font-semibold text-gray-900">Agentes</h1>
-      <p class="text-sm text-gray-500 mt-0.5">Automatize atendimentos com inteligência artificial</p>
+      <p class="text-sm text-gray-500 mt-0.5">Crie agentes de IA reutilizáveis e atribua-os nas conexões</p>
     </div>
     {{ if or (eq .Role "admin") (eq .Role "super_admin") }}
     <button @click="openCreate()"
@@ -135,6 +131,7 @@ function agentsPage() {
         d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17H3a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2h-2"/>
     </svg>
     <p class="text-sm">Nenhum agente cadastrado.</p>
+    <p class="text-xs mt-1 text-gray-400">Crie um agente e atribua-o nas configurações de cada conexão.</p>
   </div>
 
   <!-- Table -->
@@ -143,8 +140,7 @@ function agentsPage() {
       <thead>
         <tr class="border-b border-gray-100 bg-gray-50 text-xs font-medium text-gray-500 uppercase tracking-wide">
           <th class="px-5 py-3 text-left">Nome</th>
-          <th class="px-5 py-3 text-left">Conexão</th>
-          <th class="px-5 py-3 text-left">Tipo</th>
+          <th class="px-5 py-3 text-left">Keyword de handoff</th>
           <th class="px-5 py-3 text-center">Status</th>
           <th class="px-5 py-3 text-right">Ações</th>
         </tr>
@@ -156,11 +152,7 @@ function agentsPage() {
               <p class="font-medium text-gray-800" x-text="a.name"></p>
             </td>
             <td class="px-5 py-3.5">
-              <p class="text-gray-600" x-text="a.instance_name || a.instance_id"></p>
-            </td>
-            <td class="px-5 py-3.5">
-              <span class="text-gray-600"
-                x-text="a.contact_type === 'first_contact' ? 'Primeiro contato' : 'Demais contatos'"></span>
+              <code class="text-xs bg-gray-100 text-gray-600 rounded px-2 py-0.5" x-text="a.handoff_keyword"></code>
             </td>
             <td class="px-5 py-3.5 text-center">
               <span x-show="a.is_active"
@@ -208,33 +200,6 @@ function agentsPage() {
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">Conexão</label>
-        <select x-model="createForm.instance_id" required
-          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <option value="">Selecione uma conexão</option>
-          <template x-for="inst in instances" :key="inst.id">
-            <option :value="inst.id" x-text="inst.name"></option>
-          </template>
-        </select>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-2">Tipo de contato</label>
-        <div class="space-y-2">
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input type="radio" x-model="createForm.contact_type" value="first_contact"
-              class="text-blue-600 focus:ring-blue-500">
-            <span class="text-sm text-gray-700">Primeiro contato</span>
-          </label>
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input type="radio" x-model="createForm.contact_type" value="returning"
-              class="text-blue-600 focus:ring-blue-500">
-            <span class="text-sm text-gray-700">Demais contatos</span>
-          </label>
-        </div>
-      </div>
-
-      <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">Prompt</label>
         <textarea x-model="createForm.prompt" rows="6" required
           placeholder="Descreva como o agente deve se comportar..."
@@ -245,7 +210,7 @@ function agentsPage() {
         <label class="block text-sm font-medium text-gray-700 mb-1">Keyword de handoff</label>
         <input type="text" x-model="createForm.handoff_keyword" placeholder="PRECISO_DE_HUMANO"
           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-        <p class="text-xs text-gray-400 mt-1">Palavra-chave que o agente usa para transferir para atendimento humano</p>
+        <p class="text-xs text-gray-400 mt-1">Palavra-chave que o agente usa no prompt para transferir ao atendimento humano</p>
       </div>
 
       <div class="flex items-center gap-3">
@@ -287,33 +252,6 @@ function agentsPage() {
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">Conexão</label>
-        <select x-model="editForm.instance_id" required
-          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <option value="">Selecione uma conexão</option>
-          <template x-for="inst in instances" :key="inst.id">
-            <option :value="inst.id" x-text="inst.name"></option>
-          </template>
-        </select>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-2">Tipo de contato</label>
-        <div class="space-y-2">
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input type="radio" x-model="editForm.contact_type" value="first_contact"
-              class="text-blue-600 focus:ring-blue-500">
-            <span class="text-sm text-gray-700">Primeiro contato</span>
-          </label>
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input type="radio" x-model="editForm.contact_type" value="returning"
-              class="text-blue-600 focus:ring-blue-500">
-            <span class="text-sm text-gray-700">Demais contatos</span>
-          </label>
-        </div>
-      </div>
-
-      <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">Prompt</label>
         <textarea x-model="editForm.prompt" rows="6" required
           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"></textarea>
@@ -323,7 +261,7 @@ function agentsPage() {
         <label class="block text-sm font-medium text-gray-700 mb-1">Keyword de handoff</label>
         <input type="text" x-model="editForm.handoff_keyword"
           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-        <p class="text-xs text-gray-400 mt-1">Palavra-chave que o agente usa para transferir para atendimento humano</p>
+        <p class="text-xs text-gray-400 mt-1">Palavra-chave que o agente usa no prompt para transferir ao atendimento humano</p>
       </div>
 
       <div class="flex items-center gap-3">

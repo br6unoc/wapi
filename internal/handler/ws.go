@@ -3,6 +3,7 @@ package handler
 import (
 	"log"
 	"net/http"
+	"time"
 	"botwapp/internal/auth"
 	"botwapp/internal/hub"
 
@@ -37,8 +38,23 @@ func WSHandler(c *gin.Context) {
 
 	log.Printf("[WS] cliente conectado")
 
-	// Mantém conexão aberta; bloqueia até desconexão
 	ctx := c.Request.Context()
+
+	// Ping a cada 20s para manter conexão viva através de proxies
+	go func() {
+		ticker := time.NewTicker(20 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				cl.Send([]byte(`{"event":"ping"}`))
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// Bloqueia até desconexão
 	for {
 		if _, _, err := conn.Read(ctx); err != nil {
 			return

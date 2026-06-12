@@ -87,12 +87,15 @@ func main() {
 		instances.PATCH("/:name/webhook", handler.UpdateWebhook)
 		instances.POST("/:name/apikey", handler.RegenerateAPIKey)
 		instances.PATCH("/:name/config", handler.UpdateConfig)
+		instances.PATCH("/:name/agents", handler.UpdateInstanceAgents)
+		instances.PATCH("/:name/sectors", handler.UpdateInstanceSectors)
 	}
 
 	// API de conversas — JWT
 	apiGroup := r.Group("/api", handler.AuthMiddleware())
 	{
 		apiGroup.GET("/conversations", handler.ListConversations)
+		apiGroup.GET("/conversations/unread-count", handler.GetUnreadCount)
 		apiGroup.GET("/conversations/:name/:phone/messages", handler.GetMessages)
 		apiGroup.POST("/conversations/:name/:phone/send", handler.SendFromUI)
 		apiGroup.POST("/conversations/:name/:phone/send-media", handler.SendMediaFromUI)
@@ -100,6 +103,8 @@ func main() {
 		apiGroup.POST("/messages/:id/transcribe", handler.TranscribeMessage)
 		apiGroup.POST("/conversations/:name/:phone/takeover", handler.TakeoverConversation)
 		apiGroup.POST("/conversations/:name/:phone/resume", handler.ResumeAgent)
+		apiGroup.PATCH("/conversations/:name/:phone/status", handler.UpdateConvStatus)
+		apiGroup.PATCH("/conversations/:name/:phone/assign", handler.AssignConversation)
 	}
 
 	// Agentes (admin only)
@@ -108,6 +113,49 @@ func main() {
 	agentsAPI.POST("", handler.CreateAgent)
 	agentsAPI.PATCH("/:id", handler.UpdateAgent)
 	agentsAPI.DELETE("/:id", handler.DeleteAgent)
+
+	// Empresas (super_admin only)
+	companiesAPI := r.Group("/api/companies", handler.AuthMiddleware(), handler.SuperAdminOnly())
+	companiesAPI.GET("", handler.ListCompanies)
+	companiesAPI.POST("", handler.CreateCompany)
+	companiesAPI.GET("/:id", handler.GetCompany)
+	companiesAPI.PATCH("/:id", handler.UpdateCompany)
+	companiesAPI.DELETE("/:id", handler.DeleteCompany)
+
+	// Usuários e setores (admin only)
+	usersAPI := r.Group("/api/users", handler.AuthMiddleware(), handler.AdminOrAbove())
+	usersAPI.GET("", handler.ListUsers)
+	usersAPI.POST("", handler.CreateUser)
+	usersAPI.PATCH("/:id", handler.UpdateUser)
+	usersAPI.DELETE("/:id", handler.DeleteUser)
+	usersAPI.PUT("/:id/assignments", handler.SetUserAssignments)
+
+	sectorsAPI := r.Group("/api/sectors", handler.AuthMiddleware(), handler.AdminOrAbove())
+	sectorsAPI.GET("", handler.ListSectors)
+	sectorsAPI.POST("", handler.CreateSector)
+	sectorsAPI.PATCH("/:id", handler.UpdateSector)
+	sectorsAPI.DELETE("/:id", handler.DeleteSector)
+
+	contactsAPI := r.Group("/api/contacts", handler.AuthMiddleware())
+	contactsAPI.POST("/:id/purchase/increment", handler.APIContactPurchaseIncrement)
+	contactsAPI.POST("/:id/purchase/decrement", handler.APIContactPurchaseDecrement)
+	contactsAPI.POST("/:id/block", handler.APIContactBlock)
+	contactsAPI.POST("/:id/unblock", handler.APIContactUnblock)
+	contactsAPI.DELETE("/:id", handler.APIContactDelete)
+	contactsAPI.GET("/tag-links", handler.ListContactTagLinks)
+	contactsAPI.POST("/:id/tags/:tagId", handler.AddContactTag)
+	contactsAPI.DELETE("/:id/tags/:tagId", handler.RemoveContactTag)
+
+	tagsAPI := r.Group("/api/tags", handler.AuthMiddleware())
+	tagsAPI.GET("", handler.ListTags)
+	tagsAPI.POST("", handler.CreateTag)
+	tagsAPI.PATCH("/:id", handler.UpdateTag)
+	tagsAPI.DELETE("/:id", handler.DeleteTag)
+
+	campaignsAPI := r.Group("/api/campaigns", handler.AuthMiddleware())
+	campaignsAPI.GET("", handler.APIListCampaigns)
+	campaignsAPI.POST("", handler.APICreateCampaign)
+	campaignsAPI.DELETE("/:id", handler.APIDeleteCampaign)
 
 	r.Static("/media", "/app/media")
 
@@ -125,6 +173,13 @@ func main() {
 		webGroup.GET("/settings", handler.WebSettings)
 		webGroup.POST("/settings", handler.WebSettingsSave)
 		webGroup.GET("/agents", handler.WebAgents)
+		webGroup.GET("/api-docs", handler.WebApiDocs)
+		webGroup.GET("/companies", handler.WebCompanies)
+		webGroup.GET("/team", handler.WebTeam)
+		webGroup.GET("/sectors", handler.WebSectors)
+		webGroup.GET("/campaigns", handler.WebCampaigns)
+		webGroup.GET("/contacts", handler.WebContacts)
+		webGroup.GET("/tags", handler.WebTags)
 	}
 
 	r.Static("/web", "./web")

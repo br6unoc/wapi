@@ -44,6 +44,7 @@ func CreateInstance(c *gin.Context) {
 		return
 	}
 
+	companyID := currentCompanyID(c)
 	id := uuid.New().String()
 	apiKey := uuid.New().String()
 
@@ -52,10 +53,11 @@ func CreateInstance(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	inst.CompanyID = companyID
 
 	_, err = postgres.DB.Exec(
-		`INSERT INTO instances (id, name, api_key) VALUES ($1, $2, $3)`,
-		id, req.Name, apiKey,
+		`INSERT INTO instances (id, name, company_id, api_key) VALUES ($1, $2, $3, $4)`,
+		id, req.Name, companyID, apiKey,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "erro ao salvar instância"})

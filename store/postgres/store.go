@@ -248,8 +248,30 @@ func Migrate() error {
 		)
 	`)
 	DB.Exec(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS filters JSONB NOT NULL DEFAULT '{}'`)
+	DB.Exec(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS drip_min_seconds INT NOT NULL DEFAULT 30`)
+	DB.Exec(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS drip_max_seconds INT NOT NULL DEFAULT 60`)
+	DB.Exec(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS message_variants JSONB NOT NULL DEFAULT '[]'`)
 	DB.Exec(`CREATE INDEX IF NOT EXISTS idx_campaigns_company ON campaigns (company_id, created_at DESC)`)
 	DB.Exec(`CREATE INDEX IF NOT EXISTS idx_campaign_contacts_status ON campaign_contacts (campaign_id, status)`)
+	DB.Exec(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_edited BOOLEAN NOT NULL DEFAULT FALSE`)
+	DB.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_wa_id ON messages (wa_message_id) WHERE wa_message_id != ''`)
+
+	DB.Exec(`CREATE TABLE IF NOT EXISTS products (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+		name VARCHAR(255) NOT NULL,
+		description TEXT NOT NULL DEFAULT '',
+		price DECIMAL(10,2),
+		active BOOLEAN NOT NULL DEFAULT TRUE,
+		created_at TIMESTAMP DEFAULT NOW()
+	)`)
+	DB.Exec(`CREATE INDEX IF NOT EXISTS idx_products_company ON products (company_id)`)
+
+	DB.Exec(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS followup_enabled BOOLEAN NOT NULL DEFAULT FALSE`)
+	DB.Exec(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS followup_intervals JSONB NOT NULL DEFAULT '[120, 1440, 4320]'`)
+	DB.Exec(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS followup_max INTEGER NOT NULL DEFAULT 3`)
+	DB.Exec(`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS followup_count INTEGER NOT NULL DEFAULT 0`)
+	DB.Exec(`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS last_followup_at TIMESTAMP`)
 
 	if err := migrateToMultiTenant(); err != nil {
 		log.Printf("[MIGRATE] Aviso na migração multi-tenant: %v", err)

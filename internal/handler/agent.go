@@ -8,15 +8,19 @@ import (
 )
 
 type Agent struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	Prompt         string `json:"prompt"`
-	IsActive       bool   `json:"is_active"`
-	HandoffKeyword string `json:"handoff_keyword"`
+	ID                string `json:"id"`
+	Name              string `json:"name"`
+	Prompt            string `json:"prompt"`
+	IsActive          bool   `json:"is_active"`
+	HandoffKeyword    string `json:"handoff_keyword"`
+	FollowupEnabled   bool   `json:"followup_enabled"`
+	FollowupIntervals string `json:"followup_intervals"` // JSON array string, e.g. [120,1440,4320]
+	FollowupMax       int    `json:"followup_max"`
 }
 
 const agentSelectQuery = `
-	SELECT id, name, prompt, is_active, handoff_keyword
+	SELECT id, name, prompt, is_active, handoff_keyword,
+	       followup_enabled, followup_intervals::text, followup_max
 	FROM agents
 	WHERE company_id = $1
 	ORDER BY created_at ASC
@@ -26,7 +30,8 @@ func scanAgent(rows interface {
 	Scan(...interface{}) error
 }) (Agent, error) {
 	var a Agent
-	err := rows.Scan(&a.ID, &a.Name, &a.Prompt, &a.IsActive, &a.HandoffKeyword)
+	err := rows.Scan(&a.ID, &a.Name, &a.Prompt, &a.IsActive, &a.HandoffKeyword,
+		&a.FollowupEnabled, &a.FollowupIntervals, &a.FollowupMax)
 	return a, err
 }
 
@@ -53,10 +58,13 @@ func ListAgents(c *gin.Context) {
 
 func CreateAgent(c *gin.Context) {
 	var req struct {
-		Name           string  `json:"name" binding:"required"`
-		Prompt         string  `json:"prompt" binding:"required"`
-		IsActive       *bool   `json:"is_active"`
-		HandoffKeyword *string `json:"handoff_keyword"`
+		Name              string  `json:"name" binding:"required"`
+		Prompt            string  `json:"prompt" binding:"required"`
+		IsActive          *bool   `json:"is_active"`
+		HandoffKeyword    *string `json:"handoff_keyword"`
+		FollowupEnabled   *bool   `json:"followup_enabled"`
+		FollowupIntervals *string `json:"followup_intervals"`
+		FollowupMax       *int    `json:"followup_max"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "campos obrigatórios: name, prompt"})
@@ -67,20 +75,32 @@ func CreateAgent(c *gin.Context) {
 	if req.IsActive != nil {
 		isActive = *req.IsActive
 	}
-
 	handoffKeyword := "PRECISO_DE_HUMANO"
 	if req.HandoffKeyword != nil && *req.HandoffKeyword != "" {
 		handoffKeyword = *req.HandoffKeyword
 	}
+	followupEnabled := false
+	if req.FollowupEnabled != nil {
+		followupEnabled = *req.FollowupEnabled
+	}
+	followupIntervals := "[120, 1440, 4320]"
+	if req.FollowupIntervals != nil && *req.FollowupIntervals != "" {
+		followupIntervals = *req.FollowupIntervals
+	}
+	followupMax := 3
+	if req.FollowupMax != nil {
+		followupMax = *req.FollowupMax
+	}
 
 	companyID := currentCompanyID(c)
-
 	var id string
 	err := postgres.DB.QueryRow(`
-		INSERT INTO agents (company_id, name, prompt, is_active, handoff_keyword)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO agents (company_id, name, prompt, is_active, handoff_keyword,
+		                    followup_enabled, followup_intervals, followup_max)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
 		RETURNING id
-	`, companyID, req.Name, req.Prompt, isActive, handoffKeyword).Scan(&id)
+	`, companyID, req.Name, req.Prompt, isActive, handoffKeyword,
+		followupEnabled, followupIntervals, followupMax).Scan(&id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -88,8 +108,11 @@ func CreateAgent(c *gin.Context) {
 
 	var a Agent
 	postgres.DB.QueryRow(
-		`SELECT id, name, prompt, is_active, handoff_keyword FROM agents WHERE id = $1`, id,
-	).Scan(&a.ID, &a.Name, &a.Prompt, &a.IsActive, &a.HandoffKeyword)
+		`SELECT id, name, prompt, is_active, handoff_keyword,
+		        followup_enabled, followup_intervals::text, followup_max
+		 FROM agents WHERE id = $1`, id,
+	).Scan(&a.ID, &a.Name, &a.Prompt, &a.IsActive, &a.HandoffKeyword,
+		&a.FollowupEnabled, &a.FollowupIntervals, &a.FollowupMax)
 
 	c.JSON(http.StatusCreated, a)
 }
@@ -100,18 +123,25 @@ func UpdateAgent(c *gin.Context) {
 
 	var existing Agent
 	err := postgres.DB.QueryRow(`
-		SELECT id, name, prompt, is_active, handoff_keyword FROM agents WHERE id = $1 AND company_id = $2
-	`, id, companyID).Scan(&existing.ID, &existing.Name, &existing.Prompt, &existing.IsActive, &existing.HandoffKeyword)
+		SELECT id, name, prompt, is_active, handoff_keyword,
+		       followup_enabled, followup_intervals::text, followup_max
+		FROM agents WHERE id = $1 AND company_id = $2
+	`, id, companyID).Scan(&existing.ID, &existing.Name, &existing.Prompt,
+		&existing.IsActive, &existing.HandoffKeyword,
+		&existing.FollowupEnabled, &existing.FollowupIntervals, &existing.FollowupMax)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "agente não encontrado"})
 		return
 	}
 
 	var req struct {
-		Name           *string `json:"name"`
-		Prompt         *string `json:"prompt"`
-		IsActive       *bool   `json:"is_active"`
-		HandoffKeyword *string `json:"handoff_keyword"`
+		Name              *string `json:"name"`
+		Prompt            *string `json:"prompt"`
+		IsActive          *bool   `json:"is_active"`
+		HandoffKeyword    *string `json:"handoff_keyword"`
+		FollowupEnabled   *bool   `json:"followup_enabled"`
+		FollowupIntervals *string `json:"followup_intervals"`
+		FollowupMax       *int    `json:"followup_max"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "dados inválidos"})
@@ -130,11 +160,23 @@ func UpdateAgent(c *gin.Context) {
 	if req.HandoffKeyword != nil {
 		existing.HandoffKeyword = *req.HandoffKeyword
 	}
+	if req.FollowupEnabled != nil {
+		existing.FollowupEnabled = *req.FollowupEnabled
+	}
+	if req.FollowupIntervals != nil && *req.FollowupIntervals != "" {
+		existing.FollowupIntervals = *req.FollowupIntervals
+	}
+	if req.FollowupMax != nil {
+		existing.FollowupMax = *req.FollowupMax
+	}
 
 	res, err := postgres.DB.Exec(`
-		UPDATE agents SET name = $1, prompt = $2, is_active = $3, handoff_keyword = $4
-		WHERE id = $5 AND company_id = $6
-	`, existing.Name, existing.Prompt, existing.IsActive, existing.HandoffKeyword, id, companyID)
+		UPDATE agents SET name=$1, prompt=$2, is_active=$3, handoff_keyword=$4,
+		                  followup_enabled=$5, followup_intervals=$6::jsonb, followup_max=$7
+		WHERE id=$8 AND company_id=$9
+	`, existing.Name, existing.Prompt, existing.IsActive, existing.HandoffKeyword,
+		existing.FollowupEnabled, existing.FollowupIntervals, existing.FollowupMax,
+		id, companyID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

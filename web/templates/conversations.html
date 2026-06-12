@@ -14,6 +14,7 @@
 
 <script>
 const TOKEN = document.querySelector('meta[name="auth-token"]')?.content || '';
+const CURRENT_USER_ID = '{{ .UserID }}';
 
 const STATUS_LABELS = { open: 'Aberta', in_progress: 'Em atendimento', closed: 'Fechada' };
 const STATUS_COLORS = {
@@ -40,10 +41,11 @@ function conversationsPage() {
     mobilePanel: 'list',
 
     // filtros
-    filterStatus: 'all',
+    filterStatus: 'open',
     filterSector: '',
     filterInstance: '',
     filterUnread: false,
+    filterUser: '',
     sectors: [],
     instances: [],
     users: [],
@@ -78,10 +80,11 @@ function conversationsPage() {
     async loadConversations() {
       try {
         const params = new URLSearchParams();
-        if (this.filterStatus !== 'all') params.set('status', this.filterStatus);
+        if (this.filterStatus) params.set('status', this.filterStatus);
         if (this.filterSector) params.set('sector_id', this.filterSector);
         if (this.filterInstance) params.set('instance_name', this.filterInstance);
         if (this.filterUnread) params.set('unread', '1');
+        if (this.filterUser) params.set('assigned_user_id', this.filterUser);
         const resp = await fetch('/api/conversations?' + params, {
           headers: { 'Authorization': `Bearer ${TOKEN}` }
         });
@@ -185,6 +188,15 @@ function conversationsPage() {
           const conv = this.conversations.find(c => c.contact_id === d.contact_id);
           if (conv) conv.conv_status = d.status;
           if (this.activeConv?.contact_id === d.contact_id) this.activeConv.conv_status = d.status;
+          return;
+        }
+
+        if (msg.event === 'message_edited') {
+          const d = msg.data;
+          if (this.activeConv?.contact_id === d.contact_id && this.activeConv?.instance_id === d.instance_id) {
+            const m = this.messages.find(m => m.id === d.id);
+            if (m) { m.content = d.content; m.is_edited = true; }
+          }
           return;
         }
 
@@ -421,7 +433,21 @@ function conversationsPage() {
       const r = await fetch(`/api/conversations/${this.activeConv.instance_name}/${this.activeConv.phone}/takeover`, {
         method: 'POST', headers: { 'Authorization': `Bearer ${TOKEN}` }
       });
-      if (r.ok) { this.selectedAgentMode = false; if (this.activeConv) this.activeConv.agent_mode = false; }
+      if (r.ok) {
+        const d = await r.json();
+        this.selectedAgentMode = false;
+        if (this.activeConv) {
+          this.activeConv.agent_mode = false;
+          this.activeConv.assigned_user_id = d.assigned_user_id || '';
+          this.activeConv.assigned_username = d.assigned_username || '';
+        }
+        const conv = this.conversations.find(c => c.contact_id === this.activeConv?.contact_id);
+        if (conv) {
+          conv.agent_mode = false;
+          conv.assigned_user_id = d.assigned_user_id || '';
+          conv.assigned_username = d.assigned_username || '';
+        }
+      }
     },
 
     async resumeAgent() {
@@ -460,7 +486,7 @@ function conversationsPage() {
 
       <!-- Status tabs -->
       <div class="flex px-3 pb-2 gap-1">
-        <template x-for="s in [{k:'all',l:'Todas'},{k:'open',l:'Abertas'},{k:'in_progress',l:'Atend.'},{k:'closed',l:'Fechadas'}]" :key="s.k">
+        <template x-for="s in [{k:'open',l:'Abertas'},{k:'ai',l:'IA'},{k:'closed',l:'Fechadas'}]" :key="s.k">
           <button @click="setFilter('filterStatus', s.k)"
             class="flex-1 text-[11px] font-medium px-2 py-1 rounded-lg transition-colors"
             :class="filterStatus === s.k ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-100'"
@@ -469,23 +495,33 @@ function conversationsPage() {
       </div>
 
       <!-- Filtros adicionais -->
-      <div class="px-3 pb-2 flex gap-2">
+      <div class="px-3 pb-2 flex gap-2 flex-wrap">
         <select x-model="filterSector" @change="loadConversations()"
-          class="flex-1 text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-400">
+          class="flex-1 min-w-0 text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-400">
           <option value="">Todos os setores</option>
           <template x-for="s in sectors" :key="s.id">
             <option :value="s.id" x-text="s.name"></option>
           </template>
         </select>
         <select x-model="filterInstance" @change="loadConversations()"
-          class="flex-1 text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-400">
+          class="flex-1 min-w-0 text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-400">
           <option value="">Todas conexões</option>
           <template x-for="i in instances" :key="i.id">
             <option :value="i.name" x-text="i.name"></option>
           </template>
         </select>
+        <!-- Filtro por atendente — visível só para admin/coord -->
+        <template x-if="'{{ .Role }}' === 'admin' || '{{ .Role }}' === 'super_admin' || '{{ .Role }}' === 'coordinator'">
+          <select x-model="filterUser" @change="loadConversations()"
+            class="flex-1 min-w-0 text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-400">
+            <option value="">Todos atendentes</option>
+            <template x-for="u in users" :key="u.id">
+              <option :value="u.id" x-text="u.username"></option>
+            </template>
+          </select>
+        </template>
         <button @click="filterUnread = !filterUnread; loadConversations()"
-          class="px-2 py-1.5 rounded-lg border text-xs font-medium transition-colors"
+          class="px-2 py-1.5 rounded-lg border text-xs font-medium transition-colors flex-shrink-0"
           :class="filterUnread ? 'bg-green-500 text-white border-green-500' : 'border-gray-200 text-gray-500 hover:bg-gray-50'"
           title="Só não lidas">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -639,13 +675,21 @@ function conversationsPage() {
 
           <!-- Agent mode -->
           <div class="flex items-center gap-1.5 flex-shrink-0">
-            <button x-show="selectedAgentMode" @click="takeover()"
+            <button x-show="selectedAgentMode || (!activeConv.assigned_user_id || activeConv.assigned_user_id !== CURRENT_USER_ID)" @click="takeover()"
               class="text-xs border border-amber-200 text-amber-600 rounded-lg px-2.5 py-1 hover:bg-amber-50 transition-colors font-medium hidden sm:block">
               Assumir
             </button>
-            <button x-show="!selectedAgentMode" @click="resumeAgent()"
+            <button x-show="!selectedAgentMode && activeConv.assigned_user_id === CURRENT_USER_ID" @click="resumeAgent()"
               class="text-xs border border-blue-200 text-blue-600 rounded-lg px-2.5 py-1 hover:bg-blue-50 transition-colors font-medium hidden sm:block">
               → Agente
+            </button>
+            <button x-show="activeConv.conv_status !== 'closed'" @click="changeStatus('closed')"
+              class="text-xs border border-green-200 text-green-700 rounded-lg px-2.5 py-1 hover:bg-green-50 transition-colors font-medium hidden sm:block">
+              ✓ Resolver
+            </button>
+            <button x-show="activeConv.conv_status === 'closed'" @click="changeStatus('open')"
+              class="text-xs border border-gray-300 text-gray-500 rounded-lg px-2.5 py-1 hover:bg-gray-50 transition-colors font-medium hidden sm:block">
+              ↩ Reabrir
             </button>
           </div>
         </div>
@@ -756,7 +800,12 @@ function conversationsPage() {
             </template>
 
             <template x-if="msg.type === 'text' || msg.type === ''">
-              <p x-text="msg.content" class="break-words whitespace-pre-wrap leading-relaxed"></p>
+              <div>
+                <p x-text="msg.content" class="break-words whitespace-pre-wrap leading-relaxed"></p>
+                <template x-if="msg.is_edited">
+                  <span class="text-[10px] text-gray-400 italic">editado</span>
+                </template>
+              </div>
             </template>
 
             <div class="flex items-center justify-end gap-1 mt-1">
@@ -855,7 +904,13 @@ function conversationsPage() {
             </button>
           </div>
 
-          <div x-show="!recording" class="flex items-end gap-2 px-4 py-3">
+          <!-- Banner conversa fechada -->
+          <div x-show="activeConv && activeConv.conv_status === 'closed'" class="flex items-center justify-between px-4 py-3 bg-gray-50 border-t border-gray-200">
+            <span class="text-sm text-gray-400">Conversa encerrada</span>
+            <button @click="changeStatus('open')" class="text-xs border border-gray-300 text-gray-500 rounded-lg px-3 py-1.5 hover:bg-gray-100 transition-colors font-medium">↩ Reabrir</button>
+          </div>
+
+          <div x-show="!recording && (!activeConv || activeConv.conv_status !== 'closed')" class="flex items-end gap-2 px-4 py-3">
             <input id="media-file-input" type="file" accept="image/*,video/*,audio/*" class="hidden" @change="onFileSelected($event)"/>
             <button @click="document.getElementById('media-file-input').click()"
               class="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center bg-gray-100 hover:bg-gray-200 text-gray-500 transition-colors">

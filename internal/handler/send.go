@@ -48,7 +48,7 @@ func SendText(c *gin.Context) {
 	}
 
 	// Salvar mensagem enviada no DB e broadcast
-	go func(instID, instName, phone, message string) {
+	go func(instID, instName, compID, phone, message string) {
 		var contactID string
 		if err := postgres.DB.QueryRow(
 			`INSERT INTO contacts (instance_id, phone, name)
@@ -87,8 +87,8 @@ func SendText(c *gin.Context) {
 			},
 		}
 		jsonBytes, _ := json.Marshal(payload)
-		hub.Global.Broadcast(jsonBytes)
-	}(inst.ID, inst.Name, number, req.Message)
+		hub.Global.BroadcastToCompany(compID, jsonBytes)
+	}(inst.ID, inst.Name, inst.CompanyID, number, req.Message)
 
 	c.JSON(http.StatusOK, gin.H{"message": "mensagem enviada com sucesso"})
 }

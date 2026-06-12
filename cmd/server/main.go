@@ -41,6 +41,7 @@ func main() {
 	}
 
 	r := gin.Default()
+	r.MaxMultipartMemory = 32 << 20 // 32 MB
 
 	r.Use(func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
@@ -114,6 +115,13 @@ func main() {
 	agentsAPI.PATCH("/:id", handler.UpdateAgent)
 	agentsAPI.DELETE("/:id", handler.DeleteAgent)
 
+	// Produtos
+	productsAPI := r.Group("/api/products", handler.AuthMiddleware())
+	productsAPI.GET("", handler.APIListProducts)
+	productsAPI.POST("", handler.APICreateProduct)
+	productsAPI.PUT("/:id", handler.APIUpdateProduct)
+	productsAPI.DELETE("/:id", handler.APIDeleteProduct)
+
 	// Empresas (super_admin only)
 	companiesAPI := r.Group("/api/companies", handler.AuthMiddleware(), handler.SuperAdminOnly())
 	companiesAPI.GET("", handler.ListCompanies)
@@ -156,6 +164,7 @@ func main() {
 	campaignsAPI.GET("", handler.APIListCampaigns)
 	campaignsAPI.POST("", handler.APICreateCampaign)
 	campaignsAPI.DELETE("/:id", handler.APIDeleteCampaign)
+	campaignsAPI.POST("/parse-file", handler.APIParseContactsFile)
 
 	r.Static("/media", "/app/media")
 
@@ -180,6 +189,7 @@ func main() {
 		webGroup.GET("/campaigns", handler.WebCampaigns)
 		webGroup.GET("/contacts", handler.WebContacts)
 		webGroup.GET("/tags", handler.WebTags)
+		webGroup.GET("/products", handler.WebProducts)
 	}
 
 	r.Static("/web", "./web")
@@ -200,6 +210,8 @@ func main() {
 		}
 	}()
 
+	go instance.RunFollowupWorker()
+
 	<-quit
 	log.Println("Sinal recebido, encerrando servidor graciosamente...")
 
@@ -217,7 +229,7 @@ func main() {
 
 func loadInstancesFromDB() error {
 	rows, err := postgres.DB.Query(
-		`SELECT id, name, api_key, webhook_url, transcription_enabled, typing_delay_min, typing_delay_max, status FROM instances`,
+		`SELECT id, name, company_id, api_key, webhook_url, transcription_enabled, typing_delay_min, typing_delay_max, status FROM instances`,
 	)
 	if err != nil {
 		return err
@@ -228,11 +240,11 @@ func loadInstancesFromDB() error {
 	var toReconnect []*instance.Instance
 
 	for rows.Next() {
-		var id, name, apiKey, webhookURL, status string
+		var id, name, companyID, apiKey, webhookURL, status string
 		var transcriptionEnabled bool
 		var typingDelayMin, typingDelayMax int
 
-		if err := rows.Scan(&id, &name, &apiKey, &webhookURL, &transcriptionEnabled, &typingDelayMin, &typingDelayMax, &status); err != nil {
+		if err := rows.Scan(&id, &name, &companyID, &apiKey, &webhookURL, &transcriptionEnabled, &typingDelayMin, &typingDelayMax, &status); err != nil {
 			log.Printf("Erro ao ler instância: %v", err)
 			continue
 		}
@@ -243,6 +255,7 @@ func loadInstancesFromDB() error {
 			continue
 		}
 
+		inst.CompanyID = companyID
 		inst.WebhookURL = webhookURL
 		inst.TranscriptionEnabled = transcriptionEnabled
 		inst.TypingDelayMin = typingDelayMin

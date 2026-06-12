@@ -3,11 +3,11 @@ package auth
 import (
 	"fmt"
 	"time"
-	"wapi/store/postgres"
+	"botwapp/store/postgres"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"wapi/config"
+	"botwapp/config"
 )
 
 type APIToken struct {

@@ -1,29 +1,39 @@
 package handler
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 
 	"botwapp/internal/instance"
 	"botwapp/internal/service"
 	"botwapp/store/postgres"
 
 	"github.com/gin-gonic/gin"
+	"github.com/xuri/excelize/v2"
 )
 
 // CampaignFilters holds optional filter criteria applied on top of audience selection.
 type CampaignFilters struct {
-	DateFrom     string   `json:"date_from"`     // lead entry from (YYYY-MM-DD)
-	DateTo       string   `json:"date_to"`       // lead entry to (YYYY-MM-DD)
-	TagIDs       []string `json:"tag_ids"`       // must have all these tags
-	InactiveDays int      `json:"inactive_days"` // last_contact_at older than N days (0 = no filter)
-	MinPurchases int      `json:"min_purchases"` // -1 = no filter
-	MaxPurchases int      `json:"max_purchases"` // -1 = no filter
-	ManualPhones string   `json:"manual_phones"` // used when audience_type = 'manual'
+	DateFrom       string            `json:"date_from"`       // lead entry from (YYYY-MM-DD)
+	DateTo         string            `json:"date_to"`         // lead entry to (YYYY-MM-DD)
+	TagIDs         []string          `json:"tag_ids"`         // must have all these tags
+	InactiveDays   int               `json:"inactive_days"`   // last_contact_at older than N days (0 = no filter)
+	MinPurchases   int               `json:"min_purchases"`   // -1 = no filter
+	MaxPurchases   int               `json:"max_purchases"`   // -1 = no filter
+	ManualPhones   string            `json:"manual_phones"`   // plain phone list (fallback)
+	ManualContacts []ManualContact   `json:"manual_contacts"` // from file upload: [{phone, name}]
+}
+
+type ManualContact struct {
+	Phone string `json:"phone"`
+	Name  string `json:"name"`
 }
 
 type CampaignView struct {
@@ -148,17 +158,39 @@ func APICreateCampaign(c *gin.Context) {
 	var body struct {
 		Name         string          `json:"name" binding:"required"`
 		InstanceID   string          `json:"instance_id" binding:"required"`
-		Message      string          `json:"message" binding:"required"`
+		Message      string          `json:"message"`  // kept for back-compat
+		Messages     []string        `json:"messages"` // up to 6 variants
 		AudienceType string          `json:"audience_type" binding:"required"`
 		AudienceRef  string          `json:"audience_ref"`
 		Filters      CampaignFilters `json:"filters"`
 		ScheduleType string          `json:"schedule_type"`
 		ScheduledAt  string          `json:"scheduled_at"`
+		DripDelay    string          `json:"drip_delay"` // "30s-1m","1m-3m","3m-5m","5m-10m"
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	// Normaliza variantes: filtra vazios, limita a 6
+	var variants []string
+	for _, m := range body.Messages {
+		if strings.TrimSpace(m) != "" {
+			variants = append(variants, strings.TrimSpace(m))
+		}
+		if len(variants) == 6 {
+			break
+		}
+	}
+	// Fallback para campo legado
+	if len(variants) == 0 && strings.TrimSpace(body.Message) != "" {
+		variants = []string{strings.TrimSpace(body.Message)}
+	}
+	if len(variants) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "pelo menos uma mensagem é obrigatória"})
+		return
+	}
+	primaryMessage := variants[0]
 
 	// Non-admin forced to mine
 	if role != "admin" && role != "super_admin" && role != "coordinator" {
@@ -194,17 +226,19 @@ func APICreateCampaign(c *gin.Context) {
 	}
 
 	filtersJSON, _ := json.Marshal(body.Filters)
+	variantsJSON, _ := json.Marshal(variants)
+	dripMin, dripMax := parseDripDelay(body.DripDelay)
 
 	var campaignID string
 	err = postgres.DB.QueryRow(`
 		INSERT INTO campaigns
-		  (company_id, created_by, name, message, instance_id, audience_type, audience_ref,
-		   filters, schedule_type, scheduled_at, status, total_contacts)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		  (company_id, created_by, name, message, message_variants, instance_id, audience_type, audience_ref,
+		   filters, schedule_type, scheduled_at, status, total_contacts, drip_min_seconds, drip_max_seconds)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		RETURNING id
-	`, companyID, userID, body.Name, body.Message, body.InstanceID,
+	`, companyID, userID, body.Name, primaryMessage, string(variantsJSON), body.InstanceID,
 		body.AudienceType, audienceRef, string(filtersJSON), body.ScheduleType, scheduledAt,
-		status, len(contacts)).Scan(&campaignID)
+		status, len(contacts), dripMin, dripMax).Scan(&campaignID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -222,7 +256,7 @@ func APICreateCampaign(c *gin.Context) {
 	}
 
 	if status == "running" {
-		go runCampaign(campaignID, body.InstanceID, body.Message)
+		go runCampaign(campaignID, body.InstanceID, variants, dripMin, dripMax)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"ok": true, "id": campaignID, "total": len(contacts)})
@@ -257,6 +291,17 @@ func resolveCampaignContacts(companyID, userID, audienceType, audienceRef string
 	// Manual list — bypass DB contacts
 	if audienceType == "manual" {
 		var contacts []campaignContact
+		// Prefer structured contacts from file upload
+		if len(filters.ManualContacts) > 0 {
+			for _, mc := range filters.ManualContacts {
+				phone := strings.TrimSpace(mc.Phone)
+				if phone != "" {
+					contacts = append(contacts, campaignContact{Phone: phone, Name: mc.Name})
+				}
+			}
+			return contacts, nil
+		}
+		// Fallback: plain phone list
 		for _, line := range strings.Split(filters.ManualPhones, "\n") {
 			phone := strings.TrimSpace(line)
 			if phone != "" {
@@ -362,10 +407,11 @@ func resolveCampaignContacts(companyID, userID, audienceType, audienceRef string
 	return contacts, nil
 }
 
-func runCampaign(campaignID, instanceID, messageTemplate string) {
+func runCampaign(campaignID, instanceID string, messageVariants []string, dripMin, dripMax int) {
+	defer postgres.DB.Exec(`UPDATE campaigns SET status='finished', finished_at=NOW() WHERE id=$1 AND status='running'`, campaignID)
+
 	inst, ok := instance.Global.Get(instanceID)
 	if !ok || inst.WAClient == nil || !inst.WAClient.IsConnected() {
-		postgres.DB.Exec(`UPDATE campaigns SET status='finished' WHERE id=$1`, campaignID)
 		return
 	}
 
@@ -389,8 +435,16 @@ func runCampaign(campaignID, instanceID, messageTemplate string) {
 
 	postgres.DB.Exec(`UPDATE campaigns SET started_at=NOW() WHERE id=$1`, campaignID)
 
-	for _, p := range list {
-		msg := personalizeMessage(messageTemplate, p.Name)
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	rangeSeconds := dripMax - dripMin
+	if rangeSeconds <= 0 {
+		rangeSeconds = 1
+	}
+	nVariants := len(messageVariants)
+
+	for i, p := range list {
+		template := messageVariants[i%nVariants] // rotação circular
+		msg := personalizeMessage(template, p.Name)
 		err := sendTextViaInstance(inst, p.Phone, msg)
 
 		if err != nil {
@@ -406,10 +460,207 @@ func runCampaign(campaignID, instanceID, messageTemplate string) {
 			postgres.DB.Exec(`UPDATE campaigns SET sent_count = sent_count + 1 WHERE id=$1`, campaignID)
 		}
 
-		time.Sleep(2 * time.Second)
+		// Drip delay: skip after last contact
+		if i < len(list)-1 {
+			delaySec := dripMin + rng.Intn(rangeSeconds)
+			log.Printf("[campaign] aguardando %ds antes do próximo disparo", delaySec)
+			time.Sleep(time.Duration(delaySec) * time.Second)
+		}
 	}
 
 	postgres.DB.Exec(`UPDATE campaigns SET status='finished', finished_at=NOW() WHERE id=$1`, campaignID)
+}
+
+// APIParseContactsFile parseia CSV ou XLSX e retorna [{phone, name}].
+// Detecta automaticamente quais colunas são telefone e nome.
+func APIParseContactsFile(c *gin.Context) {
+	fh, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "arquivo não enviado"})
+		return
+	}
+
+	f, err := fh.Open()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "erro ao abrir arquivo"})
+		return
+	}
+	defer f.Close()
+
+	name := strings.ToLower(fh.Filename)
+	var rows [][]string
+
+	if strings.HasSuffix(name, ".csv") {
+		r := csv.NewReader(f)
+		r.LazyQuotes = true
+		r.TrimLeadingSpace = true
+		rows, err = r.ReadAll()
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "erro ao ler CSV: " + err.Error()})
+			return
+		}
+	} else if strings.HasSuffix(name, ".xlsx") || strings.HasSuffix(name, ".xls") {
+		xl, err := excelize.OpenReader(f)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "erro ao ler Excel: " + err.Error()})
+			return
+		}
+		sheets := xl.GetSheetList()
+		if len(sheets) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "planilha vazia"})
+			return
+		}
+		rows, err = xl.GetRows(sheets[0])
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "erro ao ler planilha"})
+			return
+		}
+	} else {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "formato não suportado — use .csv ou .xlsx"})
+		return
+	}
+
+	contacts, warning := parseContactRows(rows)
+	c.JSON(http.StatusOK, gin.H{"contacts": contacts, "total": len(contacts), "warning": warning})
+}
+
+// parseContactRows detecta colunas de telefone e nome e extrai os contatos.
+func parseContactRows(rows [][]string) ([]ManualContact, string) {
+	if len(rows) == 0 {
+		return nil, ""
+	}
+
+	phoneCol, nameCol := -1, -1
+	startRow := 0
+
+	// Tenta detectar pelo cabeçalho
+	header := rows[0]
+	for i, h := range header {
+		norm := normalizeHeader(h)
+		if phoneCol < 0 && isPhoneHeader(norm) {
+			phoneCol = i
+		} else if nameCol < 0 && isNameHeader(norm) {
+			nameCol = i
+		}
+	}
+
+	if phoneCol >= 0 {
+		startRow = 1 // linha 0 é cabeçalho
+	} else {
+		// Sem cabeçalho reconhecível — detecta por conteúdo
+		for i, cell := range header {
+			if looksLikePhone(cell) {
+				phoneCol = i
+				break
+			}
+		}
+		for i, cell := range header {
+			if i != phoneCol && !looksLikePhone(cell) && strings.TrimSpace(cell) != "" {
+				nameCol = i
+				break
+			}
+		}
+		startRow = 0
+	}
+
+	if phoneCol < 0 {
+		// Última tentativa: assume coluna 0 = telefone
+		phoneCol = 0
+		if len(header) > 1 {
+			nameCol = 1
+		}
+		startRow = 0
+	}
+
+	warning := ""
+	if startRow == 0 && len(rows) > 0 && !looksLikePhone(rows[0][phoneCol]) {
+		warning = "Cabeçalho não detectado — verifique se os dados estão corretos"
+	}
+
+	var contacts []ManualContact
+	seen := map[string]bool{}
+	for _, row := range rows[startRow:] {
+		if phoneCol >= len(row) {
+			continue
+		}
+		phone := sanitizePhone(row[phoneCol])
+		if phone == "" || seen[phone] {
+			continue
+		}
+		seen[phone] = true
+		name := ""
+		if nameCol >= 0 && nameCol < len(row) {
+			name = strings.TrimSpace(row[nameCol])
+		}
+		contacts = append(contacts, ManualContact{Phone: phone, Name: name})
+	}
+	return contacts, warning
+}
+
+func normalizeHeader(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var b strings.Builder
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func isPhoneHeader(norm string) bool {
+	keywords := []string{"telefone", "fone", "phone", "celular", "cel", "numero", "whatsapp", "wpp", "contato", "tel"}
+	for _, k := range keywords {
+		if strings.Contains(norm, k) {
+			return true
+		}
+	}
+	return false
+}
+
+func isNameHeader(norm string) bool {
+	keywords := []string{"nome", "name", "cliente", "razao", "empresa", "pessoa"}
+	for _, k := range keywords {
+		if strings.Contains(norm, k) {
+			return true
+		}
+	}
+	return false
+}
+
+func looksLikePhone(s string) bool {
+	digits := 0
+	for _, r := range s {
+		if unicode.IsDigit(r) {
+			digits++
+		}
+	}
+	return digits >= 8 && digits <= 15
+}
+
+func sanitizePhone(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// parseDripDelay converte o preset de faixa em min/max segundos.
+// Padrão (sem preset): 30–60s.
+func parseDripDelay(preset string) (min, max int) {
+	switch preset {
+	case "1m-3m":
+		return 60, 180
+	case "3m-5m":
+		return 180, 300
+	case "5m-10m":
+		return 300, 600
+	default: // "30s-1m" ou vazio
+		return 30, 60
+	}
 }
 
 func personalizeMessage(tmpl, name string) string {

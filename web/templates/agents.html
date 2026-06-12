@@ -6,90 +6,109 @@
 const TOKEN = document.querySelector('meta[name="auth-token"]')?.content || '';
 
 function agentsPage() {
+  const defaultFollowupIntervals = '[120, 1440, 4320]';
+
+  function parseIntervals(json) {
+    try { return JSON.parse(json || defaultFollowupIntervals); } catch { return [120, 1440, 4320]; }
+  }
+
   return {
     agents: [],
     loading: true,
 
     showCreate: false,
     creating: false,
-    createForm: { name: '', prompt: '', handoff_keyword: 'PRECISO_DE_HUMANO', is_active: true },
+    createForm: { name: '', prompt: '', handoff_keyword: 'PRECISO_DE_HUMANO', is_active: true,
+                  followup_enabled: false, followup_max: 3, followupIntervals: [120, 1440, 4320] },
     createError: '',
 
     showEdit: false,
     editing: false,
-    editForm: { id: '', name: '', prompt: '', handoff_keyword: '', is_active: true },
+    editForm: { id: '', name: '', prompt: '', handoff_keyword: '', is_active: true,
+                followup_enabled: false, followup_max: 3, followupIntervals: [120, 1440, 4320] },
     editError: '',
 
-    async init() {
-      await this.load();
-    },
+    async init() { await this.load(); },
 
     async load() {
       this.loading = true;
       try {
         const r = await fetch('/api/agents', { headers: { 'Authorization': `Bearer ${TOKEN}` } });
         this.agents = await r.json();
-      } finally {
-        this.loading = false;
-      }
+      } finally { this.loading = false; }
     },
 
     openCreate() {
-      this.createForm = { name: '', prompt: '', handoff_keyword: 'PRECISO_DE_HUMANO', is_active: true };
+      this.createForm = { name: '', prompt: '', handoff_keyword: 'PRECISO_DE_HUMANO', is_active: true,
+                          followup_enabled: false, followup_max: 3, followupIntervals: [120, 1440, 4320] };
       this.createError = '';
       this.showCreate = true;
     },
 
+    addInterval(form) { form.followupIntervals.push(60); },
+    removeInterval(form, idx) { form.followupIntervals.splice(idx, 1); },
+
+    formatIntervalLabel(mins) {
+      if (mins < 60) return mins + 'min';
+      if (mins < 1440) return (mins/60).toFixed(1).replace('.0','') + 'h';
+      return (mins/1440).toFixed(1).replace('.0','') + 'd';
+    },
+
+    buildPayload(form) {
+      return {
+        name: form.name,
+        prompt: form.prompt,
+        handoff_keyword: form.handoff_keyword,
+        is_active: form.is_active,
+        followup_enabled: form.followup_enabled,
+        followup_intervals: JSON.stringify(form.followupIntervals.map(v => parseInt(v) || 60)),
+        followup_max: parseInt(form.followup_max) || 3,
+      };
+    },
+
     async submitCreate() {
       if (!this.createForm.name || !this.createForm.prompt) return;
-      this.creating = true;
-      this.createError = '';
+      this.creating = true; this.createError = '';
       try {
         const r = await fetch('/api/agents', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${TOKEN}` },
-          body: JSON.stringify(this.createForm)
+          body: JSON.stringify(this.buildPayload(this.createForm))
         });
         if (!r.ok) { this.createError = 'Erro ao criar agente'; return; }
         const agent = await r.json();
+        agent.followupIntervals = parseIntervals(agent.followup_intervals);
         this.agents.push(agent);
         this.showCreate = false;
-      } finally {
-        this.creating = false;
-      }
+      } finally { this.creating = false; }
     },
 
     openEdit(a) {
-      this.editForm = { ...a };
+      this.editForm = { ...a, followupIntervals: parseIntervals(a.followup_intervals) };
       this.editError = '';
       this.showEdit = true;
     },
 
     async submitEdit() {
-      this.editing = true;
-      this.editError = '';
+      this.editing = true; this.editError = '';
       try {
         const r = await fetch(`/api/agents/${this.editForm.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${TOKEN}` },
-          body: JSON.stringify(this.editForm)
+          body: JSON.stringify(this.buildPayload(this.editForm))
         });
         if (!r.ok) { this.editError = 'Erro ao atualizar agente'; return; }
         const updated = await r.json();
+        updated.followupIntervals = parseIntervals(updated.followup_intervals);
         const idx = this.agents.findIndex(a => a.id === updated.id);
         if (idx !== -1) this.agents[idx] = updated;
         this.showEdit = false;
-      } finally {
-        this.editing = false;
-      }
+      } finally { this.editing = false; }
     },
 
     async remove(a) {
       if (!confirm(`Remover o agente "${a.name}"?`)) return;
-      const r = await fetch(`/api/agents/${a.id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${TOKEN}` }
-      });
+      const r = await fetch(`/api/agents/${a.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${TOKEN}` } });
       if (!r.ok) { alert('Erro ao remover agente'); return; }
       this.agents = this.agents.filter(x => x.id !== a.id);
     }
@@ -105,18 +124,26 @@ function agentsPage() {
       <h1 class="text-xl font-semibold text-gray-900">Agentes</h1>
       <p class="text-sm text-gray-500 mt-0.5">Crie agentes de IA reutilizáveis e atribua-os nas conexões</p>
     </div>
-    {{ if or (eq .Role "admin") (eq .Role "super_admin") }}
-    <button @click="openCreate()"
-      class="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-700 transition-colors">
-      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-      </svg>
-      Novo agente
-    </button>
-    {{ end }}
+    <div class="flex items-center gap-3">
+      <a href="/products"
+        class="flex items-center gap-1.5 text-sm border border-gray-200 text-gray-600 rounded-lg px-3 py-2 hover:bg-gray-50 transition-colors">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+        </svg>
+        Produtos
+      </a>
+      {{ if or (eq .Role "admin") (eq .Role "super_admin") }}
+      <button @click="openCreate()"
+        class="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-700 transition-colors">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+        </svg>
+        Novo agente
+      </button>
+      {{ end }}
+    </div>
   </div>
 
-  <!-- Loading -->
   <div x-show="loading" class="flex justify-center py-16">
     <svg class="w-8 h-8 animate-spin text-gray-400" fill="none" viewBox="0 0 24 24">
       <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
@@ -124,7 +151,6 @@ function agentsPage() {
     </svg>
   </div>
 
-  <!-- Empty -->
   <div x-show="!loading && agents.length === 0" class="text-center py-16 text-gray-400">
     <svg class="w-12 h-12 mx-auto mb-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
@@ -134,13 +160,13 @@ function agentsPage() {
     <p class="text-xs mt-1 text-gray-400">Crie um agente e atribua-o nas configurações de cada conexão.</p>
   </div>
 
-  <!-- Table -->
   <div x-show="!loading && agents.length > 0" class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
     <table class="w-full text-sm">
       <thead>
         <tr class="border-b border-gray-100 bg-gray-50 text-xs font-medium text-gray-500 uppercase tracking-wide">
           <th class="px-5 py-3 text-left">Nome</th>
           <th class="px-5 py-3 text-left">Keyword de handoff</th>
+          <th class="px-5 py-3 text-center">Follow-up</th>
           <th class="px-5 py-3 text-center">Status</th>
           <th class="px-5 py-3 text-right">Ações</th>
         </tr>
@@ -155,26 +181,22 @@ function agentsPage() {
               <code class="text-xs bg-gray-100 text-gray-600 rounded px-2 py-0.5" x-text="a.handoff_keyword"></code>
             </td>
             <td class="px-5 py-3.5 text-center">
-              <span x-show="a.is_active"
-                class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+              <span x-show="a.followup_enabled"
+                class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
                 Ativo
               </span>
-              <span x-show="!a.is_active"
-                class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
-                Inativo
-              </span>
+              <span x-show="!a.followup_enabled" class="text-gray-300 text-xs">—</span>
+            </td>
+            <td class="px-5 py-3.5 text-center">
+              <span x-show="a.is_active" class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">Ativo</span>
+              <span x-show="!a.is_active" class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">Inativo</span>
             </td>
             <td class="px-5 py-3.5 text-right">
               <div class="flex items-center justify-end gap-2">
-                <button @click="openEdit(a)"
-                  class="text-xs border border-gray-200 text-gray-600 rounded-lg px-3 py-1.5 hover:bg-gray-50 transition-colors font-medium">
-                  Editar
-                </button>
-                <button @click="remove(a)"
-                  class="text-xs border border-red-100 text-red-400 rounded-lg px-3 py-1.5 hover:bg-red-50 hover:border-red-200 transition-colors">
+                <button @click="openEdit(a)" class="text-xs border border-gray-200 text-gray-600 rounded-lg px-3 py-1.5 hover:bg-gray-50 transition-colors font-medium">Editar</button>
+                <button @click="remove(a)" class="text-xs border border-red-100 text-red-400 rounded-lg px-3 py-1.5 hover:bg-red-50 hover:border-red-200 transition-colors">
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
                   </svg>
                 </button>
               </div>
@@ -189,47 +211,85 @@ function agentsPage() {
 
 <!-- Modal: Novo agente -->
 <div x-show="showCreate" x-cloak class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">
-  <div class="bg-white rounded-xl border border-gray-200 shadow-xl p-6 w-full max-w-lg max-h-screen overflow-y-auto">
+  <div class="bg-white rounded-xl border border-gray-200 shadow-xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
     <h2 class="text-base font-semibold text-gray-800 mb-4">Novo agente</h2>
     <form @submit.prevent="submitCreate()" class="space-y-4">
-
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">Nome</label>
         <input type="text" x-model="createForm.name" placeholder="ex: Agente de Vendas" required
           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
       </div>
-
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">Prompt</label>
         <textarea x-model="createForm.prompt" rows="6" required
           placeholder="Descreva como o agente deve se comportar..."
           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"></textarea>
       </div>
-
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">Keyword de handoff</label>
         <input type="text" x-model="createForm.handoff_keyword" placeholder="PRECISO_DE_HUMANO"
           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-        <p class="text-xs text-gray-400 mt-1">Palavra-chave que o agente usa no prompt para transferir ao atendimento humano</p>
+        <p class="text-xs text-gray-400 mt-1">Palavra-chave para transferir ao atendimento humano</p>
+      </div>
+
+      <!-- Follow-up -->
+      <div class="border border-gray-200 rounded-xl p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-sm font-medium text-gray-800">Follow-up automático</p>
+            <p class="text-xs text-gray-400 mt-0.5">Reativa leads que pararam de responder</p>
+          </div>
+          <button type="button" @click="createForm.followup_enabled = !createForm.followup_enabled"
+            class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors"
+            :class="createForm.followup_enabled ? 'bg-purple-600' : 'bg-gray-200'">
+            <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition"
+              :class="createForm.followup_enabled ? 'translate-x-4' : 'translate-x-0'"></span>
+          </button>
+        </div>
+        <div x-show="createForm.followup_enabled" class="space-y-2 pt-1">
+          <div class="flex items-center justify-between">
+            <p class="text-xs font-medium text-gray-600">Intervalos (em minutos)</p>
+            <button type="button" @click="addInterval(createForm)"
+              class="text-xs text-purple-600 hover:text-purple-700 font-medium">+ Adicionar</button>
+          </div>
+          <template x-for="(v, idx) in createForm.followupIntervals" :key="idx">
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-gray-400 w-16 flex-shrink-0" x-text="(idx+1)+'ª tentativa'"></span>
+              <input type="number" :value="v" min="5"
+                @input="createForm.followupIntervals[idx] = parseInt($event.target.value) || 60"
+                class="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"/>
+              <span class="text-xs text-gray-400 w-12 flex-shrink-0" x-text="formatIntervalLabel(v)"></span>
+              <button type="button" @click="removeInterval(createForm, idx)"
+                x-show="createForm.followupIntervals.length > 1"
+                class="text-gray-300 hover:text-red-400 flex-shrink-0">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+              </button>
+            </div>
+          </template>
+          <div class="flex items-center gap-2 pt-1">
+            <label class="text-xs text-gray-600 w-16 flex-shrink-0">Máx. tentativas</label>
+            <input type="number" x-model="createForm.followup_max" min="1" max="10"
+              class="w-20 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"/>
+          </div>
+        </div>
       </div>
 
       <div class="flex items-center gap-3">
         <button type="button" @click="createForm.is_active = !createForm.is_active"
-          class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none"
+          class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors"
           :class="createForm.is_active ? 'bg-blue-600' : 'bg-gray-200'">
-          <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200"
+          <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition"
             :class="createForm.is_active ? 'translate-x-4' : 'translate-x-0'"></span>
         </button>
         <span class="text-sm text-gray-700" x-text="createForm.is_active ? 'Ativo' : 'Inativo'"></span>
       </div>
 
       <div x-show="createError" class="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2" x-text="createError"></div>
-
       <div class="flex gap-2 pt-1">
         <button type="button" @click="showCreate = false"
-          class="flex-1 border border-gray-300 text-gray-600 rounded-lg px-4 py-2 text-sm hover:bg-gray-50">
-          Cancelar
-        </button>
+          class="flex-1 border border-gray-300 text-gray-600 rounded-lg px-4 py-2 text-sm hover:bg-gray-50">Cancelar</button>
         <button type="submit" :disabled="creating"
           class="flex-1 bg-blue-600 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
           <span x-text="creating ? 'Criando...' : 'Criar'"></span>
@@ -241,46 +301,84 @@ function agentsPage() {
 
 <!-- Modal: Editar agente -->
 <div x-show="showEdit" x-cloak class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">
-  <div class="bg-white rounded-xl border border-gray-200 shadow-xl p-6 w-full max-w-lg max-h-screen overflow-y-auto">
+  <div class="bg-white rounded-xl border border-gray-200 shadow-xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
     <h2 class="text-base font-semibold text-gray-800 mb-4">Editar agente</h2>
     <form @submit.prevent="submitEdit()" class="space-y-4">
-
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">Nome</label>
         <input type="text" x-model="editForm.name" required
           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
       </div>
-
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">Prompt</label>
         <textarea x-model="editForm.prompt" rows="6" required
           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"></textarea>
       </div>
-
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">Keyword de handoff</label>
         <input type="text" x-model="editForm.handoff_keyword"
           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-        <p class="text-xs text-gray-400 mt-1">Palavra-chave que o agente usa no prompt para transferir ao atendimento humano</p>
+        <p class="text-xs text-gray-400 mt-1">Palavra-chave para transferir ao atendimento humano</p>
+      </div>
+
+      <!-- Follow-up -->
+      <div class="border border-gray-200 rounded-xl p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-sm font-medium text-gray-800">Follow-up automático</p>
+            <p class="text-xs text-gray-400 mt-0.5">Reativa leads que pararam de responder</p>
+          </div>
+          <button type="button" @click="editForm.followup_enabled = !editForm.followup_enabled"
+            class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors"
+            :class="editForm.followup_enabled ? 'bg-purple-600' : 'bg-gray-200'">
+            <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition"
+              :class="editForm.followup_enabled ? 'translate-x-4' : 'translate-x-0'"></span>
+          </button>
+        </div>
+        <div x-show="editForm.followup_enabled" class="space-y-2 pt-1">
+          <div class="flex items-center justify-between">
+            <p class="text-xs font-medium text-gray-600">Intervalos (em minutos)</p>
+            <button type="button" @click="addInterval(editForm)"
+              class="text-xs text-purple-600 hover:text-purple-700 font-medium">+ Adicionar</button>
+          </div>
+          <template x-for="(v, idx) in editForm.followupIntervals" :key="idx">
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-gray-400 w-16 flex-shrink-0" x-text="(idx+1)+'ª tentativa'"></span>
+              <input type="number" :value="v" min="5"
+                @input="editForm.followupIntervals[idx] = parseInt($event.target.value) || 60"
+                class="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"/>
+              <span class="text-xs text-gray-400 w-12 flex-shrink-0" x-text="formatIntervalLabel(v)"></span>
+              <button type="button" @click="removeInterval(editForm, idx)"
+                x-show="editForm.followupIntervals.length > 1"
+                class="text-gray-300 hover:text-red-400 flex-shrink-0">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+              </button>
+            </div>
+          </template>
+          <div class="flex items-center gap-2 pt-1">
+            <label class="text-xs text-gray-600 w-16 flex-shrink-0">Máx. tentativas</label>
+            <input type="number" x-model="editForm.followup_max" min="1" max="10"
+              class="w-20 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"/>
+          </div>
+        </div>
       </div>
 
       <div class="flex items-center gap-3">
         <button type="button" @click="editForm.is_active = !editForm.is_active"
-          class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none"
+          class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors"
           :class="editForm.is_active ? 'bg-blue-600' : 'bg-gray-200'">
-          <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200"
+          <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition"
             :class="editForm.is_active ? 'translate-x-4' : 'translate-x-0'"></span>
         </button>
         <span class="text-sm text-gray-700" x-text="editForm.is_active ? 'Ativo' : 'Inativo'"></span>
       </div>
 
       <div x-show="editError" class="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2" x-text="editError"></div>
-
       <div class="flex gap-2 pt-1">
         <button type="button" @click="showEdit = false"
-          class="flex-1 border border-gray-300 text-gray-600 rounded-lg px-4 py-2 text-sm hover:bg-gray-50">
-          Cancelar
-        </button>
+          class="flex-1 border border-gray-300 text-gray-600 rounded-lg px-4 py-2 text-sm hover:bg-gray-50">Cancelar</button>
         <button type="submit" :disabled="editing"
           class="flex-1 bg-blue-600 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
           <span x-text="editing ? 'Salvando...' : 'Salvar'"></span>

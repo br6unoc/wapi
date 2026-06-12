@@ -54,7 +54,8 @@ function campaignsPage() {
     form: {
       name: '',
       instance_id: '',
-      message: '',
+      message: '',  // kept for compat
+      messages: ['', '', '', '', '', ''],
       audience_type: (ROLE === 'admin' || ROLE === 'super_admin' || ROLE === 'coordinator') ? 'all' : 'mine',
       audience_ref: '',
       filters: {
@@ -65,9 +66,11 @@ function campaignsPage() {
         min_purchases: -1,
         max_purchases: -1,
         manual_phones: '',
+        manual_contacts: [],
       },
       schedule_type: 'now',
       scheduled_at: '',
+      drip_delay: '30s-1m',
     },
     saving: false,
     saveError: '',
@@ -83,7 +86,47 @@ function campaignsPage() {
     hasTag(tagId) { return this.form.filters.tag_ids.includes(tagId); },
 
     manualCount() {
+      if (this.form.filters.manual_contacts && this.form.filters.manual_contacts.length > 0)
+        return this.form.filters.manual_contacts.length;
       return this.form.filters.manual_phones.split('\n').map(l => l.trim()).filter(Boolean).length;
+    },
+
+    // File upload
+    fileUploading: false,
+    fileWarning: '',
+    fileName: '',
+
+    async handleFileUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      this.fileUploading = true;
+      this.fileWarning = '';
+      this.fileName = file.name;
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const r = await fetch('/api/campaigns/parse-file', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${TOKEN}` },
+          body: fd,
+        });
+        const data = await r.json();
+        if (!r.ok) { this.fileWarning = data.error || 'Erro ao processar arquivo'; return; }
+        this.form.filters.manual_contacts = data.contacts || [];
+        this.form.filters.manual_phones = '';
+        if (data.warning) this.fileWarning = data.warning;
+      } catch(e) {
+        this.fileWarning = 'Erro ao enviar arquivo';
+      } finally {
+        this.fileUploading = false;
+      }
+    },
+
+    clearFile() {
+      this.form.filters.manual_contacts = [];
+      this.form.filters.manual_phones = '';
+      this.fileName = '';
+      this.fileWarning = '';
     },
 
     async init() { await this.loadTags(); },
@@ -93,6 +136,12 @@ function campaignsPage() {
       this.saveError = '';
       try {
         const payload = { ...this.form };
+        // Send only non-empty message variants
+        payload.messages = (this.form.messages || []).filter(m => m && m.trim() !== '');
+        if (payload.messages.length === 0) {
+          this.saveError = 'Pelo menos uma mensagem é obrigatória';
+          return;
+        }
         // Clean up unused filters
         if (this.isManual()) {
           payload.audience_ref = '';
@@ -309,11 +358,27 @@ function campaignsPage() {
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Mensagem</label>
-          <textarea x-model="form.message" rows="5" required
-            placeholder="Olá {{ "{{nome}}" }}, temos uma novidade especial para você..."
-            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"></textarea>
-          <p class="text-xs text-gray-400 mt-1">Use <code class="bg-gray-100 px-1 rounded">{{ "{{nome}}" }}</code> para personalizar com o nome do contato</p>
+          <div class="flex items-center justify-between mb-2">
+            <label class="block text-sm font-medium text-gray-700">Mensagens</label>
+            <span class="text-xs text-gray-400">Até 6 variações — rotaciona 1→2→3→...→6→1</span>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-2">
+            <template x-for="(_, idx) in [0,1,2,3,4,5]" :key="idx">
+              <div class="relative">
+                <span class="absolute top-2 left-2.5 text-xs font-bold text-gray-300 select-none" x-text="idx+1"></span>
+                <textarea
+                  :x-model="`form.messages[${idx}]`"
+                  @input="form.messages[idx] = $event.target.value"
+                  :value="form.messages[idx] || ''"
+                  rows="4"
+                  :required="idx === 0"
+                  :placeholder="idx === 0 ? 'Olá {{ "{{nome}}" }}, temos uma novidade...' : 'Variação ' + (idx+1) + ' (opcional)'"
+                  class="w-full border border-gray-300 rounded-lg pl-6 pr-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                  :class="idx === 0 ? 'border-blue-300' : ''"></textarea>
+              </div>
+            </template>
+          </div>
+          <p class="text-xs text-gray-400">Use <code class="bg-gray-100 px-1 rounded">{{ "{{nome}}" }}</code> para personalizar · Mensagem 1 é obrigatória · As demais são opcionais</p>
         </div>
       </div>
 
@@ -394,13 +459,76 @@ function campaignsPage() {
             <input type="radio" x-model="form.audience_type" value="manual" class="mt-0.5 accent-blue-600">
             <div class="flex-1">
               <p class="text-sm font-medium text-gray-800">Lista manual</p>
-              <p class="text-xs text-gray-400 mb-2">Cole os números diretamente, um por linha</p>
+              <p class="text-xs text-gray-400 mb-2">Importe uma planilha (.xlsx, .csv) com colunas de nome e telefone</p>
               <template x-if="form.audience_type === 'manual'">
-                <div>
-                  <textarea x-model="form.filters.manual_phones" rows="6"
-                    placeholder="5511999990001&#10;5511999990002&#10;5511999990003"
-                    class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"></textarea>
-                  <p class="text-xs text-gray-400 mt-1"><span x-text="manualCount()"></span> números · Formato: DDI+DDD+número (ex: 5511999990001)</p>
+                <div class="space-y-3" @click.stop>
+
+                  <!-- Upload area -->
+                  <template x-if="!fileName">
+                    <label class="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-gray-300 rounded-xl p-6 cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-all">
+                      <input type="file" accept=".xlsx,.xls,.csv" class="sr-only" @change="handleFileUpload($event)">
+                      <svg class="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                      </svg>
+                      <span class="text-sm font-medium text-gray-500">Clique para selecionar arquivo</span>
+                      <span class="text-xs text-gray-400">.xlsx, .xls ou .csv · colunas: nome, telefone</span>
+                    </label>
+                  </template>
+
+                  <!-- Arquivo carregado -->
+                  <template x-if="fileName">
+                    <div>
+                      <div class="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 mb-2">
+                        <div class="flex items-center gap-2 min-w-0">
+                          <svg class="w-4 h-4 text-blue-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                          </svg>
+                          <span class="text-sm text-blue-700 font-medium truncate" x-text="fileName"></span>
+                        </div>
+                        <div class="flex items-center gap-2 flex-shrink-0 ml-2">
+                          <span x-show="fileUploading" class="text-xs text-blue-500">processando...</span>
+                          <span x-show="!fileUploading" class="text-xs font-semibold text-blue-600" x-text="manualCount() + ' contatos'"></span>
+                          <button type="button" @click="clearFile()" class="text-gray-400 hover:text-red-500 transition-colors">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+
+                      <!-- Preview dos primeiros contatos -->
+                      <template x-if="form.filters.manual_contacts && form.filters.manual_contacts.length > 0">
+                        <div class="border border-gray-200 rounded-lg overflow-hidden text-xs">
+                          <div class="bg-gray-50 px-3 py-1.5 text-gray-500 font-medium border-b border-gray-200 flex justify-between">
+                            <span>Preview</span>
+                            <span x-text="form.filters.manual_contacts.length > 5 ? '+ ' + (form.filters.manual_contacts.length - 5) + ' mais...' : ''"></span>
+                          </div>
+                          <template x-for="(ct, idx) in form.filters.manual_contacts.slice(0,5)" :key="idx">
+                            <div class="flex items-center gap-3 px-3 py-1.5 border-b border-gray-50 last:border-b-0">
+                              <code class="text-gray-500 bg-gray-100 rounded px-1" x-text="ct.phone"></code>
+                              <span class="text-gray-600" x-text="ct.name || '—'"></span>
+                            </div>
+                          </template>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+
+                  <!-- Warning -->
+                  <p x-show="fileWarning" x-text="fileWarning" class="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"></p>
+
+                  <!-- Fallback manual -->
+                  <details class="text-xs">
+                    <summary class="cursor-pointer text-gray-400 hover:text-gray-600">Ou cole números manualmente</summary>
+                    <div class="mt-2">
+                      <textarea x-model="form.filters.manual_phones" rows="4"
+                        placeholder="5511999990001&#10;5511999990002"
+                        @input="form.filters.manual_contacts = []; fileName = ''"
+                        class="w-full border border-gray-300 rounded-lg px-2 py-1.5 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"></textarea>
+                      <p class="text-gray-400 mt-1">DDI+DDD+número (ex: 5511999990001)</p>
+                    </div>
+                  </details>
+
                 </div>
               </template>
             </div>
@@ -482,6 +610,38 @@ function campaignsPage() {
       <!-- Envio -->
       <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-5">
         <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide">Envio</h2>
+
+        <!-- Gotejador -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">Intervalo entre mensagens (gotejador)</label>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <label class="flex flex-col items-center gap-1.5 p-3 rounded-xl border cursor-pointer text-center transition-all"
+              :class="form.drip_delay === '30s-1m' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 hover:bg-gray-50 text-gray-600'">
+              <input type="radio" x-model="form.drip_delay" value="30s-1m" class="sr-only">
+              <span class="text-lg font-bold">30s–1m</span>
+              <span class="text-xs opacity-70">Mais rápido</span>
+            </label>
+            <label class="flex flex-col items-center gap-1.5 p-3 rounded-xl border cursor-pointer text-center transition-all"
+              :class="form.drip_delay === '1m-3m' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 hover:bg-gray-50 text-gray-600'">
+              <input type="radio" x-model="form.drip_delay" value="1m-3m" class="sr-only">
+              <span class="text-lg font-bold">1–3 min</span>
+              <span class="text-xs opacity-70">Recomendado</span>
+            </label>
+            <label class="flex flex-col items-center gap-1.5 p-3 rounded-xl border cursor-pointer text-center transition-all"
+              :class="form.drip_delay === '3m-5m' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 hover:bg-gray-50 text-gray-600'">
+              <input type="radio" x-model="form.drip_delay" value="3m-5m" class="sr-only">
+              <span class="text-lg font-bold">3–5 min</span>
+              <span class="text-xs opacity-70">Conservador</span>
+            </label>
+            <label class="flex flex-col items-center gap-1.5 p-3 rounded-xl border cursor-pointer text-center transition-all"
+              :class="form.drip_delay === '5m-10m' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 hover:bg-gray-50 text-gray-600'">
+              <input type="radio" x-model="form.drip_delay" value="5m-10m" class="sr-only">
+              <span class="text-lg font-bold">5–10 min</span>
+              <span class="text-xs opacity-70">Máxima segurança</span>
+            </label>
+          </div>
+          <p class="text-xs text-gray-400 mt-2">Cada envio usa um tempo aleatório dentro da faixa — simula comportamento humano e evita bloqueio do WhatsApp</p>
+        </div>
 
         <div class="flex gap-4">
           <label class="flex items-center gap-2 cursor-pointer">

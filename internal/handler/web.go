@@ -79,10 +79,12 @@ func WebLogout(c *gin.Context) {
 func WebConversations(c *gin.Context) {
 	token, _ := c.Get("token")
 	username, _ := c.Get("username")
+	userID := currentUserID(c)
 	render(c, http.StatusOK, "conversations.html", gin.H{
 		"Token":    token,
 		"Username": username,
 		"Role":     currentRole(c),
+		"UserID":   userID,
 	})
 }
 
@@ -132,6 +134,16 @@ func WebSectors(c *gin.Context) {
 	token, _ := c.Get("token")
 	username, _ := c.Get("username")
 	render(c, http.StatusOK, "sectors.html", gin.H{
+		"Token":    token,
+		"Username": username,
+		"Role":     currentRole(c),
+	})
+}
+
+func WebProducts(c *gin.Context) {
+	token, _ := c.Get("token")
+	username, _ := c.Get("username")
+	render(c, http.StatusOK, "products.html", gin.H{
 		"Token":    token,
 		"Username": username,
 		"Role":     currentRole(c),

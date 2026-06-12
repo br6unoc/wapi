@@ -26,6 +26,7 @@ func ListConversations(c *gin.Context) {
 	instanceName := c.Query("instance_name")
 	sectorID := c.Query("sector_id")
 	unreadOnly := c.Query("unread") == "1"
+	assignedUserID := c.Query("assigned_user_id")
 
 	rows, err := postgres.DB.Query(`
 		SELECT
@@ -55,15 +56,20 @@ func ListConversations(c *gin.Context) {
 		) m ON true
 		WHERE i.company_id = $1
 		AND m.created_at IS NOT NULL
-		AND ($2::text = '' OR c.conv_status = $2)
+		AND (
+			$2::text = ''
+			OR ($2 = 'ai' AND c.agent_mode = true)
+			OR ($2 != 'ai' AND c.conv_status = $2)
+		)
 		AND ($3::text = '' OR i.name = $3)
 		AND ($4::text = '' OR EXISTS (
 			SELECT 1 FROM instance_sectors WHERE instance_id = i.id AND sector_id::text = $4
 		))
 		AND ($5::boolean = false OR c.unread_count > 0)
+		AND ($6::text = '' OR c.assigned_user_id::text = $6)
 		ORDER BY m.created_at DESC
 		LIMIT 100
-	`, companyID, statusFilter, instanceName, sectorID, unreadOnly)
+	`, companyID, statusFilter, instanceName, sectorID, unreadOnly, assignedUserID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -118,6 +124,7 @@ func GetUnreadCount(c *gin.Context) {
 func UpdateConvStatus(c *gin.Context) {
 	name := c.Param("name")
 	phone := c.Param("phone")
+	companyID := currentCompanyID(c)
 
 	var req struct {
 		Status string `json:"status" binding:"required"`
@@ -136,8 +143,8 @@ func UpdateConvStatus(c *gin.Context) {
 	err := postgres.DB.QueryRow(`
 		SELECT c.id FROM contacts c
 		JOIN instances i ON i.id = c.instance_id
-		WHERE i.name = $1 AND c.phone = $2
-	`, name, phone).Scan(&contactID)
+		WHERE i.name = $1 AND c.phone = $2 AND i.company_id = $3
+	`, name, phone, companyID).Scan(&contactID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "contato não encontrado"})
 		return
@@ -149,7 +156,7 @@ func UpdateConvStatus(c *gin.Context) {
 		"event": "conv_status_changed",
 		"data":  map[string]interface{}{"contact_id": contactID, "status": req.Status},
 	})
-	hub.Global.Broadcast(payload)
+	hub.Global.BroadcastToCompany(companyID, payload)
 
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
@@ -171,8 +178,8 @@ func AssignConversation(c *gin.Context) {
 	err := postgres.DB.QueryRow(`
 		SELECT c.id FROM contacts c
 		JOIN instances i ON i.id = c.instance_id
-		WHERE i.name = $1 AND c.phone = $2
-	`, name, phone).Scan(&contactID)
+		WHERE i.name = $1 AND c.phone = $2 AND i.company_id = $3
+	`, name, phone, companyID).Scan(&contactID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "contato não encontrado"})
 		return
@@ -204,7 +211,7 @@ func AssignConversation(c *gin.Context) {
 			"assigned_username": assignedUsername,
 		},
 	})
-	hub.Global.Broadcast(payload)
+	hub.Global.BroadcastToCompany(companyID, payload)
 
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
@@ -212,16 +219,17 @@ func AssignConversation(c *gin.Context) {
 func GetMessages(c *gin.Context) {
 	instanceName := c.Param("name")
 	phone := c.Param("phone")
+	companyID := currentCompanyID(c)
 
 	rows, err := postgres.DB.Query(`
-		SELECT m.id, m.direction, m.content, m.type, m.media_path, m.media_name, m.created_at
+		SELECT m.id, m.direction, m.content, m.type, m.media_path, m.media_name, m.created_at, m.is_edited
 		FROM messages m
-		JOIN contacts c ON c.id = m.contact_id
+		JOIN contacts ct ON ct.id = m.contact_id
 		JOIN instances i ON i.id = m.instance_id
-		WHERE i.name = $1 AND c.phone = $2
+		WHERE i.name = $1 AND ct.phone = $2 AND i.company_id = $3
 		ORDER BY m.created_at ASC
 		LIMIT 200
-	`, instanceName, phone)
+	`, instanceName, phone, companyID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -236,12 +244,13 @@ func GetMessages(c *gin.Context) {
 		MediaPath string `json:"media_path"`
 		MediaName string `json:"media_name"`
 		CreatedAt string `json:"created_at"`
+		IsEdited  bool   `json:"is_edited"`
 	}
 
 	msgs := make([]Msg, 0)
 	for rows.Next() {
 		var msg Msg
-		if err := rows.Scan(&msg.ID, &msg.Direction, &msg.Content, &msg.Type, &msg.MediaPath, &msg.MediaName, &msg.CreatedAt); err != nil {
+		if err := rows.Scan(&msg.ID, &msg.Direction, &msg.Content, &msg.Type, &msg.MediaPath, &msg.MediaName, &msg.CreatedAt, &msg.IsEdited); err != nil {
 			continue
 		}
 		msgs = append(msgs, msg)
@@ -253,9 +262,10 @@ func GetMessages(c *gin.Context) {
 func SendMediaFromUI(c *gin.Context) {
 	instanceName := c.Param("name")
 	phone := c.Param("phone")
+	companyID := currentCompanyID(c)
 
 	inst, ok := instance.Global.GetByName(instanceName)
-	if !ok {
+	if !ok || inst.CompanyID != companyID {
 		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
 		return
 	}
@@ -387,7 +397,7 @@ func SendMediaFromUI(c *gin.Context) {
 		},
 	}
 	jsonBytes, _ := json.Marshal(payload)
-	hub.Global.Broadcast(jsonBytes)
+	hub.Global.BroadcastToCompany(companyID, jsonBytes)
 
 	// Desativa agente quando humano envia mensagem
 	postgres.DB.Exec(`UPDATE contacts SET agent_mode = FALSE WHERE id = $1`, contactID)
@@ -395,7 +405,7 @@ func SendMediaFromUI(c *gin.Context) {
 		"event": "agent_mode_changed",
 		"data":  map[string]interface{}{"contact_id": contactID, "agent_mode": false},
 	})
-	hub.Global.Broadcast(mediaAgentPayload)
+	hub.Global.BroadcastToCompany(companyID, mediaAgentPayload)
 
 	c.JSON(http.StatusOK, gin.H{"ok": true, "id": msgID})
 
@@ -440,9 +450,13 @@ func TranscribeMessage(c *gin.Context) {
 func TakeoverConversation(c *gin.Context) {
 	name := c.Param("name")
 	phone := c.Param("phone")
+	userID := currentUserID(c)
+	companyID := currentCompanyID(c)
+	username, _ := c.Get("username")
+	usernameStr, _ := username.(string)
 
 	inst, ok := instance.Global.GetByName(name)
-	if !ok {
+	if !ok || inst.CompanyID != companyID {
 		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
 		return
 	}
@@ -457,23 +471,34 @@ func TakeoverConversation(c *gin.Context) {
 		return
 	}
 
-	postgres.DB.Exec(`UPDATE contacts SET agent_mode = FALSE WHERE id = $1`, contactID)
+	postgres.DB.Exec(`UPDATE contacts SET agent_mode = FALSE, assigned_user_id = $2 WHERE id = $1`, contactID, userID)
 
-	payload, _ := json.Marshal(map[string]interface{}{
+	agentPayload, _ := json.Marshal(map[string]interface{}{
 		"event": "agent_mode_changed",
 		"data":  map[string]interface{}{"contact_id": contactID, "agent_mode": false},
 	})
-	hub.Global.Broadcast(payload)
+	hub.Global.BroadcastToCompany(companyID, agentPayload)
 
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	assignPayload, _ := json.Marshal(map[string]interface{}{
+		"event": "conv_assigned",
+		"data": map[string]interface{}{
+			"contact_id":        contactID,
+			"assigned_user_id":  userID,
+			"assigned_username": usernameStr,
+		},
+	})
+	hub.Global.BroadcastToCompany(companyID, assignPayload)
+
+	c.JSON(http.StatusOK, gin.H{"ok": true, "assigned_user_id": userID, "assigned_username": usernameStr})
 }
 
 func ResumeAgent(c *gin.Context) {
 	name := c.Param("name")
 	phone := c.Param("phone")
+	companyID := currentCompanyID(c)
 
 	inst, ok := instance.Global.GetByName(name)
-	if !ok {
+	if !ok || inst.CompanyID != companyID {
 		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
 		return
 	}
@@ -494,7 +519,7 @@ func ResumeAgent(c *gin.Context) {
 		"event": "agent_mode_changed",
 		"data":  map[string]interface{}{"contact_id": contactID, "agent_mode": true},
 	})
-	hub.Global.Broadcast(payload)
+	hub.Global.BroadcastToCompany(companyID, payload)
 
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
@@ -520,9 +545,10 @@ func MarkAsRead(c *gin.Context) {
 func SendFromUI(c *gin.Context) {
 	instanceName := c.Param("name")
 	phone := c.Param("phone")
+	companyID := currentCompanyID(c)
 
 	inst, ok := instance.Global.GetByName(instanceName)
-	if !ok {
+	if !ok || inst.CompanyID != companyID {
 		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
 		return
 	}
@@ -582,7 +608,7 @@ func SendFromUI(c *gin.Context) {
 		},
 	}
 	jsonBytes, _ := json.Marshal(payload)
-	hub.Global.Broadcast(jsonBytes)
+	hub.Global.BroadcastToCompany(companyID, jsonBytes)
 
 	// Desativa agente quando humano envia mensagem
 	postgres.DB.Exec(`UPDATE contacts SET agent_mode = FALSE WHERE id = $1`, contactID)
@@ -590,7 +616,7 @@ func SendFromUI(c *gin.Context) {
 		"event": "agent_mode_changed",
 		"data":  map[string]interface{}{"contact_id": contactID, "agent_mode": false},
 	})
-	hub.Global.Broadcast(agentPayload)
+	hub.Global.BroadcastToCompany(companyID, agentPayload)
 
 	// Retorna imediatamente — sem travar o frontend
 	c.JSON(http.StatusOK, gin.H{"ok": true})

@@ -67,8 +67,14 @@ func WebContacts(c *gin.Context) {
 
 func apiSetBlock(c *gin.Context, block bool) {
 	id := c.Param("id")
+	companyID := currentCompanyID(c)
 	ct, err := postgres.GetContactBasic(id)
 	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contato não encontrado"})
+		return
+	}
+	inst, ok := instance.Global.GetByName(ct.InstanceName)
+	if !ok || inst.CompanyID != companyID {
 		c.JSON(http.StatusNotFound, gin.H{"error": "contato não encontrado"})
 		return
 	}
@@ -76,8 +82,7 @@ func apiSetBlock(c *gin.Context, block bool) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	inst, ok := instance.Global.GetByName(ct.InstanceName)
-	if ok && inst.WAClient != nil && inst.WAClient.IsConnected() {
+	if inst.WAClient != nil && inst.WAClient.IsConnected() {
 		action := waEvents.BlocklistChangeActionBlock
 		if !block {
 			action = waEvents.BlocklistChangeActionUnblock
@@ -93,8 +98,22 @@ func apiSetBlock(c *gin.Context, block bool) {
 func APIContactBlock(c *gin.Context)   { apiSetBlock(c, true) }
 func APIContactUnblock(c *gin.Context) { apiSetBlock(c, false) }
 
+func contactBelongsToCompany(contactID, companyID string) bool {
+	var count int
+	postgres.DB.QueryRow(
+		`SELECT COUNT(*) FROM contacts ct JOIN instances i ON i.id = ct.instance_id
+		 WHERE ct.id = $1 AND i.company_id = $2`,
+		contactID, companyID,
+	).Scan(&count)
+	return count > 0
+}
+
 func APIContactDelete(c *gin.Context) {
 	id := c.Param("id")
+	if !contactBelongsToCompany(id, currentCompanyID(c)) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contato não encontrado"})
+		return
+	}
 	if err := postgres.DeleteContact(id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -104,6 +123,10 @@ func APIContactDelete(c *gin.Context) {
 
 func APIContactPurchaseIncrement(c *gin.Context) {
 	id := c.Param("id")
+	if !contactBelongsToCompany(id, currentCompanyID(c)) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contato não encontrado"})
+		return
+	}
 	if err := postgres.IncrementContactPurchase(id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -113,6 +136,10 @@ func APIContactPurchaseIncrement(c *gin.Context) {
 
 func APIContactPurchaseDecrement(c *gin.Context) {
 	id := c.Param("id")
+	if !contactBelongsToCompany(id, currentCompanyID(c)) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contato não encontrado"})
+		return
+	}
 	if err := postgres.DecrementContactPurchase(id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

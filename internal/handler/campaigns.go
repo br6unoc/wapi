@@ -169,6 +169,7 @@ func APICreateCampaign(c *gin.Context) {
 		DripDelay     string          `json:"drip_delay"` // "30s-1m","1m-3m","3m-5m","5m-10m"
 		SendStartTime string          `json:"send_start_time"` // "09:00"
 		SendEndTime   string          `json:"send_end_time"`   // "18:00"
+		AgentID       string          `json:"agent_id"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -242,16 +243,21 @@ func APICreateCampaign(c *gin.Context) {
 	sendStartTime := body.SendStartTime
 	sendEndTime := body.SendEndTime
 
+	var agentID interface{} = nil
+	if body.AgentID != "" {
+		agentID = body.AgentID
+	}
+
 	err = postgres.DB.QueryRow(`
 		INSERT INTO campaigns
 		  (company_id, created_by, name, message, message_variants, instance_id, audience_type, audience_ref,
 		   filters, schedule_type, scheduled_at, status, total_contacts, drip_min_seconds, drip_max_seconds,
-		   send_start_time, send_end_time)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+		   send_start_time, send_end_time, agent_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 		RETURNING id
 	`, companyID, userID, body.Name, primaryMessage, string(variantsJSON), body.InstanceID,
 		body.AudienceType, audienceRef, string(filtersJSON), body.ScheduleType, scheduledAt,
-		status, len(contacts), dripMin, dripMax, sendStartTime, sendEndTime).Scan(&campaignID)
+		status, len(contacts), dripMin, dripMax, sendStartTime, sendEndTime, agentID).Scan(&campaignID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -269,7 +275,7 @@ func APICreateCampaign(c *gin.Context) {
 	}
 
 	if status == "running" {
-		go runCampaign(campaignID, body.InstanceID, variants, dripMin, dripMax, sendStartTime, sendEndTime)
+		go runCampaign(campaignID, body.InstanceID, variants, dripMin, dripMax, sendStartTime, sendEndTime, body.AgentID)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"ok": true, "id": campaignID, "total": len(contacts)})
@@ -420,7 +426,7 @@ func resolveCampaignContacts(companyID, userID, audienceType, audienceRef string
 	return contacts, nil
 }
 
-func runCampaign(campaignID, instanceID string, messageVariants []string, dripMin, dripMax int, sendStartTime, sendEndTime string) {
+func runCampaign(campaignID, instanceID string, messageVariants []string, dripMin, dripMax int, sendStartTime, sendEndTime, agentID string) {
 	defer postgres.DB.Exec(`UPDATE campaigns SET status='finished', finished_at=NOW() WHERE id=$1 AND status='running'`, campaignID)
 
 	inst, ok := instance.Global.Get(instanceID)
@@ -429,7 +435,7 @@ func runCampaign(campaignID, instanceID string, messageVariants []string, dripMi
 	}
 
 	rows, err := postgres.DB.Query(
-		`SELECT id, phone, name FROM campaign_contacts WHERE campaign_id = $1 AND status = 'pending'`,
+		`SELECT cc.id, cc.phone, cc.name, COALESCE(cc.contact_id::text,'') FROM campaign_contacts cc WHERE cc.campaign_id = $1 AND cc.status = 'pending'`,
 		campaignID,
 	)
 	if err != nil {
@@ -437,11 +443,11 @@ func runCampaign(campaignID, instanceID string, messageVariants []string, dripMi
 		return
 	}
 
-	type pending struct{ ID, Phone, Name string }
+	type pending struct{ ID, Phone, Name, ContactID string }
 	var list []pending
 	for rows.Next() {
 		var p pending
-		rows.Scan(&p.ID, &p.Phone, &p.Name)
+		rows.Scan(&p.ID, &p.Phone, &p.Name, &p.ContactID)
 		list = append(list, p)
 	}
 	rows.Close()
@@ -473,6 +479,13 @@ func runCampaign(campaignID, instanceID string, messageVariants []string, dripMi
 				`UPDATE campaign_contacts SET status='sent', sent_at=NOW() WHERE id=$1`, p.ID,
 			)
 			postgres.DB.Exec(`UPDATE campaigns SET sent_count = sent_count + 1 WHERE id=$1`, campaignID)
+			// Se a campanha tem agente, ativa o modo agente no contato
+			if agentID != "" && p.ContactID != "" {
+				postgres.DB.Exec(
+					`UPDATE contacts SET agent_mode = TRUE, active_agent_id = $1 WHERE id = $2`,
+					agentID, p.ContactID,
+				)
+			}
 		}
 
 		// Drip delay: skip after last contact

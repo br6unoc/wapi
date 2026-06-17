@@ -260,6 +260,8 @@ func Migrate() error {
 	DB.Exec(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS message_variants JSONB NOT NULL DEFAULT '[]'`)
 	DB.Exec(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS send_start_time VARCHAR(5) NOT NULL DEFAULT ''`)
 	DB.Exec(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS send_end_time VARCHAR(5) NOT NULL DEFAULT ''`)
+	DB.Exec(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS agent_id UUID REFERENCES agents(id) ON DELETE SET NULL`)
+	DB.Exec(`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS active_agent_id UUID REFERENCES agents(id) ON DELETE SET NULL`)
 	DB.Exec(`CREATE INDEX IF NOT EXISTS idx_campaigns_company ON campaigns (company_id, created_at DESC)`)
 	DB.Exec(`CREATE INDEX IF NOT EXISTS idx_campaign_contacts_status ON campaign_contacts (campaign_id, status)`)
 	DB.Exec(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_edited BOOLEAN NOT NULL DEFAULT FALSE`)

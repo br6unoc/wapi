@@ -110,6 +110,80 @@ func ListConversations(c *gin.Context) {
 	c.JSON(http.StatusOK, convs)
 }
 
+// StartConversation cria (ou recupera) o contato de um número novo numa instância,
+// permitindo abrir uma conversa antes de qualquer mensagem ter sido enviada/recebida.
+func StartConversation(c *gin.Context) {
+	var req struct {
+		InstanceName string `json:"instance_name" binding:"required"`
+		Phone        string `json:"phone" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "instance_name e phone são obrigatórios"})
+		return
+	}
+
+	inst, ok := getInstanceForUser(c, req.InstanceName)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "instância não encontrada"})
+		return
+	}
+
+	number := strings.TrimPrefix(req.Phone, "+")
+	number = strings.ReplaceAll(number, " ", "")
+	number = strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, number)
+	if number == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "número de telefone inválido"})
+		return
+	}
+
+	var contactID, name, convStatus, assignedUserID string
+	var unreadCount int
+	var agentMode bool
+	err := postgres.DB.QueryRow(`
+		INSERT INTO contacts (instance_id, phone, name)
+		VALUES ($1, $2, $2)
+		ON CONFLICT (instance_id, phone) DO UPDATE SET phone = EXCLUDED.phone
+		RETURNING id, name, conv_status, COALESCE(assigned_user_id::text, ''), unread_count, agent_mode
+	`, inst.ID, number).Scan(&contactID, &name, &convStatus, &assignedUserID, &unreadCount, &agentMode)
+	if err != nil {
+		log.Printf("[DB] Erro ao upsert contact (startConversation): %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "erro ao iniciar conversa"})
+		return
+	}
+
+	var assignedUsername string
+	if assignedUserID != "" {
+		postgres.DB.QueryRow(`SELECT username FROM users WHERE id = $1`, assignedUserID).Scan(&assignedUsername)
+	}
+
+	if assignedUserID != "" && assignedUserID != currentUserID(c) {
+		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("conversa já atribuída a %s", assignedUsername)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"contact_id":        contactID,
+		"phone":             number,
+		"name":              name,
+		"unread_count":      unreadCount,
+		"conv_status":       convStatus,
+		"assigned_user_id":  assignedUserID,
+		"assigned_username": assignedUsername,
+		"instance_id":       inst.ID,
+		"instance_name":     inst.Name,
+		"last_message":      "",
+		"last_direction":    "",
+		"last_type":         "",
+		"last_message_at":   "",
+		"agent_mode":        agentMode,
+	})
+}
+
 func GetUnreadCount(c *gin.Context) {
 	companyID := currentCompanyID(c)
 	var count int
@@ -400,7 +474,7 @@ func SendMediaFromUI(c *gin.Context) {
 	hub.Global.BroadcastToCompany(companyID, jsonBytes)
 
 	// Desativa agente quando humano envia mensagem
-	postgres.DB.Exec(`UPDATE contacts SET agent_mode = FALSE WHERE id = $1`, contactID)
+	postgres.DB.Exec(`UPDATE contacts SET agent_mode = FALSE, active_agent_id = NULL WHERE id = $1`, contactID)
 	mediaAgentPayload, _ := json.Marshal(map[string]interface{}{
 		"event": "agent_mode_changed",
 		"data":  map[string]interface{}{"contact_id": contactID, "agent_mode": false},
@@ -419,8 +493,9 @@ func SendMediaFromUI(c *gin.Context) {
 
 func TranscribeMessage(c *gin.Context) {
 	msgID := c.Param("id")
+	companyID := currentCompanyID(c)
 
-	mediaPath, err := postgres.GetMessageMediaPath(msgID)
+	mediaPath, err := postgres.GetMessageMediaPath(msgID, companyID)
 	if err != nil || mediaPath == "" {
 		c.JSON(http.StatusNotFound, gin.H{"error": "arquivo de áudio não encontrado"})
 		return
@@ -434,7 +509,7 @@ func TranscribeMessage(c *gin.Context) {
 		return
 	}
 
-	text, err := transcriber.Transcribe(audioData, "audio.ogg")
+	text, err := transcriber.Transcribe(audioData, "audio.ogg", companyID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "erro na transcrição: " + err.Error()})
 		return
@@ -471,7 +546,7 @@ func TakeoverConversation(c *gin.Context) {
 		return
 	}
 
-	postgres.DB.Exec(`UPDATE contacts SET agent_mode = FALSE, assigned_user_id = $2 WHERE id = $1`, contactID, userID)
+	postgres.DB.Exec(`UPDATE contacts SET agent_mode = FALSE, active_agent_id = NULL, assigned_user_id = $2 WHERE id = $1`, contactID, userID)
 
 	agentPayload, _ := json.Marshal(map[string]interface{}{
 		"event": "agent_mode_changed",
@@ -528,12 +603,13 @@ func ResumeAgent(c *gin.Context) {
 func MarkAsRead(c *gin.Context) {
 	instanceName := c.Param("name")
 	phone := c.Param("phone")
+	companyID := currentCompanyID(c)
 
 	_, err := postgres.DB.Exec(`
 		UPDATE contacts SET unread_count = 0
-		WHERE instance_id = (SELECT id FROM instances WHERE name = $1)
+		WHERE instance_id = (SELECT id FROM instances WHERE name = $1 AND company_id = $3)
 		AND phone = $2
-	`, instanceName, phone)
+	`, instanceName, phone, companyID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -611,7 +687,7 @@ func SendFromUI(c *gin.Context) {
 	hub.Global.BroadcastToCompany(companyID, jsonBytes)
 
 	// Desativa agente quando humano envia mensagem
-	postgres.DB.Exec(`UPDATE contacts SET agent_mode = FALSE WHERE id = $1`, contactID)
+	postgres.DB.Exec(`UPDATE contacts SET agent_mode = FALSE, active_agent_id = NULL WHERE id = $1`, contactID)
 	agentPayload, _ := json.Marshal(map[string]interface{}{
 		"event": "agent_mode_changed",
 		"data":  map[string]interface{}{"contact_id": contactID, "agent_mode": false},

@@ -281,6 +281,63 @@ func APICreateCampaign(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "id": campaignID, "total": len(contacts)})
 }
 
+func APICancelCampaign(c *gin.Context) {
+	id := c.Param("id")
+	companyID := currentCompanyID(c)
+	res, err := postgres.DB.Exec(
+		`UPDATE campaigns SET status='cancelled', finished_at=NOW() WHERE id=$1 AND company_id=$2 AND status IN ('running','paused')`,
+		id, companyID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Campanha não pode ser cancelada"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func APIPauseCampaign(c *gin.Context) {
+	id := c.Param("id")
+	companyID := currentCompanyID(c)
+	res, err := postgres.DB.Exec(
+		`UPDATE campaigns SET status='paused' WHERE id=$1 AND company_id=$2 AND status='running'`,
+		id, companyID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Campanha não está em andamento"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func APIResumeCampaign(c *gin.Context) {
+	id := c.Param("id")
+	companyID := currentCompanyID(c)
+	res, err := postgres.DB.Exec(
+		`UPDATE campaigns SET status='running' WHERE id=$1 AND company_id=$2 AND status='paused'`,
+		id, companyID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Campanha não está pausada"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 func APIDeleteCampaign(c *gin.Context) {
 	id := c.Param("id")
 	companyID := currentCompanyID(c)
@@ -462,6 +519,9 @@ func runCampaign(campaignID, instanceID string, messageVariants []string, dripMi
 	nVariants := len(messageVariants)
 
 	for i, p := range list {
+		if !waitWhilePaused(campaignID) {
+			return // cancelada durante pausa ou espera de horário
+		}
 		waitForSendWindow(campaignID, sendStartTime, sendEndTime)
 
 		template := messageVariants[i%nVariants] // rotação circular
@@ -525,6 +585,26 @@ func waitForSendWindow(campaignID, startTime, endTime string) {
 		}
 		log.Printf("[campaign %s] fora do horário (%s–%s), aguardando...", campaignID, startTime, endTime)
 		time.Sleep(1 * time.Minute)
+	}
+}
+
+// waitWhilePaused bloqueia enquanto a campanha estiver pausada.
+// Retorna false se a campanha foi cancelada, true se pode continuar.
+func waitWhilePaused(campaignID string) bool {
+	for {
+		var st string
+		if err := postgres.DB.QueryRow(`SELECT status FROM campaigns WHERE id=$1`, campaignID).Scan(&st); err != nil {
+			return false
+		}
+		switch st {
+		case "running":
+			return true
+		case "paused":
+			log.Printf("[campaign %s] pausada, aguardando retomada...", campaignID)
+			time.Sleep(5 * time.Second)
+		default:
+			return false // cancelled ou outro estado inesperado
+		}
 	}
 }
 

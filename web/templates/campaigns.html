@@ -30,8 +30,8 @@ function campaignsPage() {
     },{{ end }}]{{ else }}[]{{ end }},
 
     get agendadas()   { return this.campaigns.filter(c => c.status === 'scheduled') },
-    get emAndamento() { return this.campaigns.filter(c => c.status === 'running') },
-    get finalizadas() { return this.campaigns.filter(c => c.status === 'finished') },
+    get emAndamento() { return this.campaigns.filter(c => c.status === 'running' || c.status === 'paused') },
+    get finalizadas() { return this.campaigns.filter(c => c.status === 'finished' || c.status === 'cancelled') },
 
     progress(c) {
       if (!c.total) return 0;
@@ -176,6 +176,37 @@ function campaignsPage() {
       });
       if (r.ok) this.campaigns = this.campaigns.filter(c => c.id !== id);
     },
+
+    async cancelCampaign(id) {
+      if (!confirm('Cancelar campanha? O disparo será interrompido.')) return;
+      const r = await fetch(`/api/campaigns/${id}/cancel`, {
+        method: 'POST', headers: { 'Authorization': `Bearer ${TOKEN}` }
+      });
+      if (r.ok) {
+        const c = this.campaigns.find(x => x.id === id);
+        if (c) c.status = 'cancelled';
+      }
+    },
+
+    async pauseCampaign(id) {
+      const r = await fetch(`/api/campaigns/${id}/pause`, {
+        method: 'POST', headers: { 'Authorization': `Bearer ${TOKEN}` }
+      });
+      if (r.ok) {
+        const c = this.campaigns.find(x => x.id === id);
+        if (c) c.status = 'paused';
+      }
+    },
+
+    async resumeCampaign(id) {
+      const r = await fetch(`/api/campaigns/${id}/resume`, {
+        method: 'POST', headers: { 'Authorization': `Bearer ${TOKEN}` }
+      });
+      if (r.ok) {
+        const c = this.campaigns.find(x => x.id === id);
+        if (c) c.status = 'running';
+      }
+    },
   };
 }
 </script>
@@ -248,9 +279,16 @@ function campaignsPage() {
               <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-2 mb-1">
                   <p class="font-medium text-gray-800 truncate" x-text="c.name"></p>
-                  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
-                    <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>Enviando
-                  </span>
+                  <template x-if="c.status === 'running'">
+                    <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+                      <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>Enviando
+                    </span>
+                  </template>
+                  <template x-if="c.status === 'paused'">
+                    <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700">
+                      <span class="w-1.5 h-1.5 rounded-full bg-yellow-500"></span>Pausada
+                    </span>
+                  </template>
                 </div>
                 <div class="flex items-center gap-3 text-xs text-gray-400 flex-wrap">
                   <code class="bg-gray-100 text-gray-500 rounded px-1.5 py-0.5" x-text="c.instance"></code>
@@ -261,10 +299,36 @@ function campaignsPage() {
                   <span x-show="c.failed > 0" class="text-red-400">· <span x-text="c.failed"></span> falhas</span>
                 </div>
                 <div class="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden w-full max-w-xs">
-                  <div class="h-full bg-blue-500 rounded-full transition-all" :style="'width:' + progress(c) + '%'"></div>
+                  <div class="h-full rounded-full transition-all"
+                    :class="c.status === 'paused' ? 'bg-yellow-400' : 'bg-blue-500'"
+                    :style="'width:' + progress(c) + '%'"></div>
                 </div>
               </div>
-              <span class="text-sm font-semibold text-blue-600 flex-shrink-0" x-text="progress(c) + '%'"></span>
+              <div class="flex items-center gap-2 flex-shrink-0">
+                <span class="text-sm font-semibold text-blue-600" x-text="progress(c) + '%'"></span>
+                <template x-if="c.status === 'running'">
+                  <button @click="pauseCampaign(c.id)" title="Pausar"
+                    class="text-xs border border-yellow-200 text-yellow-600 rounded-lg px-2.5 py-1.5 hover:bg-yellow-50">
+                    <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+                    </svg>
+                  </button>
+                </template>
+                <template x-if="c.status === 'paused'">
+                  <button @click="resumeCampaign(c.id)" title="Retomar"
+                    class="text-xs border border-green-200 text-green-600 rounded-lg px-2.5 py-1.5 hover:bg-green-50">
+                    <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M8 5v14l11-7z"/>
+                    </svg>
+                  </button>
+                </template>
+                <button @click="cancelCampaign(c.id)" title="Cancelar"
+                  class="text-xs border border-red-100 text-red-400 rounded-lg px-2.5 py-1.5 hover:bg-red-50">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
         </template>
@@ -319,7 +383,10 @@ function campaignsPage() {
           <tbody>
             <template x-for="c in finalizadas" :key="c.id">
               <tr class="border-b border-gray-50 hover:bg-gray-50 last:border-b-0">
-                <td class="px-5 py-3.5 font-medium text-gray-800" x-text="c.name"></td>
+                <td class="px-5 py-3.5 font-medium text-gray-800">
+                  <span x-text="c.name"></span>
+                  <span x-show="c.status === 'cancelled'" class="ml-1 text-xs text-red-400">(cancelada)</span>
+                </td>
                 <td class="px-5 py-3.5 hidden sm:table-cell"><code class="text-xs bg-gray-100 text-gray-500 rounded px-1.5 py-0.5" x-text="c.instance"></code></td>
                 <td class="px-5 py-3.5 text-xs text-gray-400 hidden md:table-cell" x-text="audienceLabel(c)"></td>
                 <td class="px-5 py-3.5 text-center">
@@ -387,6 +454,19 @@ function campaignsPage() {
             </template>
           </div>
           <p class="text-xs text-gray-400">Use <code class="bg-gray-100 px-1 rounded">{{ "{{nome}}" }}</code> para personalizar · Mensagem 1 é obrigatória · As demais são opcionais</p>
+        </div>
+
+        <!-- Agente para respostas -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">Agente para respostas <span class="text-gray-400 font-normal">(opcional)</span></label>
+          <select x-model="form.agent_id"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="">Nenhum — atendimento manual</option>
+            <template x-for="ag in agents" :key="ag.id">
+              <option :value="ag.id" x-text="ag.name"></option>
+            </template>
+          </select>
+          <p class="text-xs text-gray-400 mt-2">Quando configurado, o agente assume automaticamente a conversa assim que o contato responder</p>
         </div>
       </div>
 
@@ -668,19 +748,6 @@ function campaignsPage() {
             </div>
           </div>
           <p class="text-xs text-gray-400 mt-2">Mensagens nunca serão enviadas fora deste horário — o disparo pausa e retoma automaticamente</p>
-        </div>
-
-        <!-- Agente para respostas -->
-        <div x-show="agents && agents.length > 0">
-          <label class="block text-sm font-medium text-gray-700 mb-2">Agente para respostas <span class="text-gray-400 font-normal">(opcional)</span></label>
-          <select x-model="form.agent_id"
-            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-            <option value="">Nenhum — atendimento manual</option>
-            <template x-for="ag in agents" :key="ag.id">
-              <option :value="ag.id" x-text="ag.name"></option>
-            </template>
-          </select>
-          <p class="text-xs text-gray-400 mt-2">Quando configurado, o agente assume automaticamente a conversa assim que o contato responder</p>
         </div>
 
         <div class="flex gap-4">

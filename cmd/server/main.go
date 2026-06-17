@@ -1,19 +1,19 @@
 package main
 
 import (
+	"botwapp/config"
+	"botwapp/internal/auth"
+	"botwapp/internal/handler"
+	"botwapp/internal/instance"
+	"botwapp/store/postgres"
 	"context"
+	_ "github.com/lib/pq"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
-	"botwapp/config"
-	"botwapp/internal/auth"
-	"botwapp/internal/handler"
-	"botwapp/internal/instance"
-	"botwapp/store/postgres"
-	_ "github.com/lib/pq"
 
 	"github.com/gin-gonic/gin"
 )
@@ -59,15 +59,14 @@ func main() {
 	{
 		authGroup.POST("/login", handler.Login)
 		authGroup.GET("/me", handler.AuthMiddleware(), handler.Me)
-		authGroup.POST("/tokens", handler.AuthMiddleware(), handler.CreateToken)
-		authGroup.GET("/tokens", handler.AuthMiddleware(), handler.ListTokens)
-		authGroup.DELETE("/tokens/:id", handler.AuthMiddleware(), handler.DeleteToken)
+		authGroup.POST("/tokens", handler.AuthMiddleware(), handler.AdminOrAbove(), handler.CreateToken)
+		authGroup.GET("/tokens", handler.AuthMiddleware(), handler.AdminOrAbove(), handler.ListTokens)
+		authGroup.DELETE("/tokens/:id", handler.AuthMiddleware(), handler.AdminOrAbove(), handler.DeleteToken)
 	}
 
-	// SSE, QR Code e WebSocket — sem autenticação de header
+	// SSE, QR Code e WebSocket — sem autenticação de header (QR/SSE precisam funcionar no browser sem Authorization)
 	r.GET("/instances/:name/sse", handler.SSEHandler)
 	r.GET("/instances/:name/qrcode", handler.GetQRCode)
-	r.GET("/instances/:name/groups", handler.GetGroups)
 	r.GET("/ws", handler.WSHandler)
 
 	// Envio — usa API Key
@@ -80,9 +79,11 @@ func main() {
 	{
 		instances.GET("", handler.ListInstances)
 		instances.POST("", handler.CreateInstance)
+		instances.DELETE("/id/:id", handler.DeleteInstanceByID)
 		instances.GET("/:name", handler.GetInstance)
 		instances.DELETE("/:name", handler.DeleteInstance)
 		instances.GET("/:name/status", handler.GetStatus)
+		instances.GET("/:name/groups", handler.GetGroups)
 		instances.POST("/:name/connect", handler.ConnectInstance)
 		instances.POST("/:name/disconnect", handler.DisconnectInstance)
 		instances.PATCH("/:name/webhook", handler.UpdateWebhook)
@@ -97,6 +98,7 @@ func main() {
 	{
 		apiGroup.GET("/conversations", handler.ListConversations)
 		apiGroup.GET("/conversations/unread-count", handler.GetUnreadCount)
+		apiGroup.POST("/conversations/start", handler.StartConversation)
 		apiGroup.GET("/conversations/:name/:phone/messages", handler.GetMessages)
 		apiGroup.POST("/conversations/:name/:phone/send", handler.SendFromUI)
 		apiGroup.POST("/conversations/:name/:phone/send-media", handler.SendMediaFromUI)
@@ -144,7 +146,12 @@ func main() {
 	sectorsAPI.PATCH("/:id", handler.UpdateSector)
 	sectorsAPI.DELETE("/:id", handler.DeleteSector)
 
+	syncAPI := r.Group("/api/sync", handler.AuthMiddleware())
+	syncAPI.GET("/stats", handler.APISyncStats)
+	syncAPI.GET("/export", handler.APISyncExport)
+
 	contactsAPI := r.Group("/api/contacts", handler.AuthMiddleware())
+	contactsAPI.GET("", handler.APIListContacts)
 	contactsAPI.POST("/:id/purchase/increment", handler.APIContactPurchaseIncrement)
 	contactsAPI.POST("/:id/purchase/decrement", handler.APIContactPurchaseDecrement)
 	contactsAPI.POST("/:id/block", handler.APIContactBlock)
@@ -164,9 +171,22 @@ func main() {
 	campaignsAPI.GET("", handler.APIListCampaigns)
 	campaignsAPI.POST("", handler.APICreateCampaign)
 	campaignsAPI.DELETE("/:id", handler.APIDeleteCampaign)
+	campaignsAPI.POST("/:id/cancel", handler.APICancelCampaign)
+	campaignsAPI.POST("/:id/pause", handler.APIPauseCampaign)
+	campaignsAPI.POST("/:id/resume", handler.APIResumeCampaign)
 	campaignsAPI.POST("/parse-file", handler.APIParseContactsFile)
 
 	r.Static("/media", "/app/media")
+
+	// PWA assets na raiz (SW precisa estar na raiz para controlar todo o app)
+	r.GET("/sw.js", func(c *gin.Context) {
+		c.Header("Service-Worker-Allowed", "/")
+		c.Header("Cache-Control", "no-cache")
+		c.File("./web/sw.js")
+	})
+	r.GET("/manifest.json", func(c *gin.Context) {
+		c.File("./web/manifest.json")
+	})
 
 	// Web UI
 	handler.LoadTemplates()
@@ -179,7 +199,7 @@ func main() {
 	{
 		webGroup.GET("/connections", handler.WebConnections)
 		webGroup.GET("/conversations", handler.WebConversations)
-		webGroup.GET("/settings", handler.WebSettings)
+		webGroup.GET("/settings", handler.AdminOrAbove(), handler.WebSettings)
 		webGroup.POST("/settings", handler.WebSettingsSave)
 		webGroup.GET("/agents", handler.WebAgents)
 		webGroup.GET("/api-docs", handler.WebApiDocs)
@@ -188,6 +208,7 @@ func main() {
 		webGroup.GET("/sectors", handler.WebSectors)
 		webGroup.GET("/campaigns", handler.WebCampaigns)
 		webGroup.GET("/contacts", handler.WebContacts)
+		webGroup.GET("/sync", handler.WebSync)
 		webGroup.GET("/tags", handler.WebTags)
 		webGroup.GET("/products", handler.WebProducts)
 	}
@@ -260,7 +281,7 @@ func loadInstancesFromDB() error {
 		inst.TranscriptionEnabled = transcriptionEnabled
 		inst.TypingDelayMin = typingDelayMin
 		inst.TypingDelayMax = typingDelayMax
-		inst.Status = status
+		inst.SetStatus(status)
 
 		instance.Global.Add(inst)
 
@@ -287,15 +308,14 @@ func loadInstancesFromDB() error {
 					deadline := time.Now().Add(60 * time.Second)
 					for time.Now().Before(deadline) {
 						time.Sleep(5 * time.Second)
-						if i.Status == "connected" {
+						if i.GetStatus() == "connected" {
 							log.Printf("[STARTUP] Instância %s reconectada com sucesso.", i.Name)
 							return
 						}
 					}
 					// Sessão permanece válida — apenas marca desconectado, não faz logout
 					log.Printf("[STARTUP] Instância %s não reconectou em 60s, marcando desconectado.", i.Name)
-					i.Status = "disconnected"
-					i.Phone = ""
+					i.SetState("disconnected", "")
 					i.SaveStatusToDB()
 				}(inst)
 			}

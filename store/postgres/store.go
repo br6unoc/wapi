@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"time"
 	"botwapp/config"
 
 	_ "github.com/lib/pq"
@@ -29,6 +30,10 @@ func Connect() error {
 	if err := db.Ping(); err != nil {
 		return fmt.Errorf("erro ao conectar no postgres: %w", err)
 	}
+
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(10)
+	db.SetConnMaxLifetime(5 * time.Minute)
 
 	DB = db
 	return nil
@@ -76,12 +81,14 @@ func Migrate() error {
 		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 		name VARCHAR(255) NOT NULL,
 		token TEXT NOT NULL,
+		company_id UUID REFERENCES companies(id) ON DELETE CASCADE,
 		created_at TIMESTAMP DEFAULT NOW()
 	);
+	ALTER TABLE api_tokens ADD COLUMN IF NOT EXISTS company_id UUID REFERENCES companies(id) ON DELETE CASCADE;
 
 	CREATE TABLE IF NOT EXISTS contacts (
 		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-		instance_id UUID NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+		instance_id UUID REFERENCES instances(id) ON DELETE SET NULL,
 		phone VARCHAR(50) NOT NULL,
 		name VARCHAR(255) DEFAULT '',
 		created_at TIMESTAMP DEFAULT NOW(),
@@ -90,7 +97,7 @@ func Migrate() error {
 
 	CREATE TABLE IF NOT EXISTS messages (
 		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-		instance_id UUID NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+		instance_id UUID REFERENCES instances(id) ON DELETE SET NULL,
 		contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
 		direction VARCHAR(3) NOT NULL CHECK (direction IN ('in', 'out')),
 		content TEXT NOT NULL DEFAULT '',
@@ -251,6 +258,8 @@ func Migrate() error {
 	DB.Exec(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS drip_min_seconds INT NOT NULL DEFAULT 30`)
 	DB.Exec(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS drip_max_seconds INT NOT NULL DEFAULT 60`)
 	DB.Exec(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS message_variants JSONB NOT NULL DEFAULT '[]'`)
+	DB.Exec(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS send_start_time VARCHAR(5) NOT NULL DEFAULT ''`)
+	DB.Exec(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS send_end_time VARCHAR(5) NOT NULL DEFAULT ''`)
 	DB.Exec(`CREATE INDEX IF NOT EXISTS idx_campaigns_company ON campaigns (company_id, created_at DESC)`)
 	DB.Exec(`CREATE INDEX IF NOT EXISTS idx_campaign_contacts_status ON campaign_contacts (campaign_id, status)`)
 	DB.Exec(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_edited BOOLEAN NOT NULL DEFAULT FALSE`)
@@ -272,6 +281,19 @@ func Migrate() error {
 	DB.Exec(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS followup_max INTEGER NOT NULL DEFAULT 3`)
 	DB.Exec(`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS followup_count INTEGER NOT NULL DEFAULT 0`)
 	DB.Exec(`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS last_followup_at TIMESTAMP`)
+
+	DB.Exec(`
+		CREATE TABLE IF NOT EXISTS wa_sync_jids (
+			instance_id UUID NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+			jid TEXT NOT NULL,
+			phone TEXT NOT NULL DEFAULT '',
+			wa_name TEXT NOT NULL DEFAULT '',
+			last_msg_at TIMESTAMP,
+			synced_at TIMESTAMP DEFAULT NOW(),
+			PRIMARY KEY (instance_id, jid)
+		)
+	`)
+	DB.Exec(`CREATE INDEX IF NOT EXISTS idx_wa_sync_jids_phone ON wa_sync_jids (instance_id, phone)`)
 
 	if err := migrateToMultiTenant(); err != nil {
 		log.Printf("[MIGRATE] Aviso na migração multi-tenant: %v", err)
@@ -321,9 +343,14 @@ func migrateToMultiTenant() error {
 	return nil
 }
 
-func GetMessageMediaPath(msgID string) (string, error) {
+func GetMessageMediaPath(msgID, companyID string) (string, error) {
 	var path string
-	err := DB.QueryRow(`SELECT media_path FROM messages WHERE id = $1`, msgID).Scan(&path)
+	err := DB.QueryRow(`
+		SELECT m.media_path FROM messages m
+		JOIN contacts ct ON ct.id = m.contact_id
+		JOIN instances i ON i.id = ct.instance_id
+		WHERE m.id = $1 AND i.company_id = $2
+	`, msgID, companyID).Scan(&path)
 	if err != nil {
 		return "", err
 	}
@@ -394,5 +421,64 @@ func GetCompanySetting(companyID, key string) (string, error) {
 
 func SetCompanySetting(companyID, key, value string) error {
 	return SetSetting(companyID+":"+key, value)
+}
+
+func ClearWASyncJIDs(instanceID string) error {
+	_, err := DB.Exec(`DELETE FROM wa_sync_jids WHERE instance_id = $1`, instanceID)
+	return err
+}
+
+func UpsertWASyncJID(instanceID, jid, phone, waName string, lastMsgAt *time.Time) error {
+	_, err := DB.Exec(`
+		INSERT INTO wa_sync_jids (instance_id, jid, phone, wa_name, last_msg_at, synced_at)
+		VALUES ($1, $2, $3, $4, $5, NOW())
+		ON CONFLICT (instance_id, jid) DO UPDATE
+		SET phone = EXCLUDED.phone, wa_name = EXCLUDED.wa_name,
+		    last_msg_at = EXCLUDED.last_msg_at, synced_at = NOW()
+	`, instanceID, jid, phone, waName, lastMsgAt)
+	return err
+}
+
+type WASyncJID struct {
+	Phone        string
+	WAName       string
+	LastMsgAt    *time.Time
+	BotWappName  string
+	BotWappPhone string
+	InWA         bool
+	InBotWapp    bool
+}
+
+func GetWASyncCrossRef(instanceID string) ([]WASyncJID, error) {
+	rows, err := DB.Query(`
+		SELECT
+			COALESCE(j.phone, ct.phone)             AS numero,
+			COALESCE(j.wa_name, '')                 AS wa_name,
+			j.last_msg_at,
+			COALESCE(ct.name, '')                   AS botwapp_name,
+			COALESCE(ct.phone, '')                  AS botwapp_phone,
+			j.phone IS NOT NULL                     AS in_wa,
+			ct.phone IS NOT NULL                    AS in_botwapp
+		FROM wa_sync_jids j
+		FULL OUTER JOIN contacts ct
+			ON ct.phone = j.phone AND ct.instance_id = j.instance_id
+		WHERE (j.instance_id = $1 OR ct.instance_id = $1)
+		  AND (j.jid IS NULL OR j.jid NOT LIKE '%@g.us')
+		ORDER BY j.last_msg_at DESC NULLS LAST
+	`, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []WASyncJID
+	for rows.Next() {
+		var r WASyncJID
+		if err := rows.Scan(&r.Phone, &r.WAName, &r.LastMsgAt, &r.BotWappName, &r.BotWappPhone, &r.InWA, &r.InBotWapp); err != nil {
+			continue
+		}
+		result = append(result, r)
+	}
+	return result, nil
 }
 

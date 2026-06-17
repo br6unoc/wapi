@@ -7,6 +7,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -165,7 +166,9 @@ func APICreateCampaign(c *gin.Context) {
 		Filters      CampaignFilters `json:"filters"`
 		ScheduleType string          `json:"schedule_type"`
 		ScheduledAt  string          `json:"scheduled_at"`
-		DripDelay    string          `json:"drip_delay"` // "30s-1m","1m-3m","3m-5m","5m-10m"
+		DripDelay     string          `json:"drip_delay"` // "30s-1m","1m-3m","3m-5m","5m-10m"
+		SendStartTime string          `json:"send_start_time"` // "09:00"
+		SendEndTime   string          `json:"send_end_time"`   // "18:00"
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -200,6 +203,12 @@ func APICreateCampaign(c *gin.Context) {
 		}
 	}
 
+	var instCheck string
+	if err := postgres.DB.QueryRow(`SELECT id FROM instances WHERE id = $1 AND company_id = $2`, body.InstanceID, companyID).Scan(&instCheck); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "instância não encontrada ou não pertence à sua empresa"})
+		return
+	}
+
 	contacts, err := resolveCampaignContacts(companyID, userID, body.AudienceType, body.AudienceRef, body.Filters)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erro ao resolver contatos: " + err.Error()})
@@ -230,15 +239,19 @@ func APICreateCampaign(c *gin.Context) {
 	dripMin, dripMax := parseDripDelay(body.DripDelay)
 
 	var campaignID string
+	sendStartTime := body.SendStartTime
+	sendEndTime := body.SendEndTime
+
 	err = postgres.DB.QueryRow(`
 		INSERT INTO campaigns
 		  (company_id, created_by, name, message, message_variants, instance_id, audience_type, audience_ref,
-		   filters, schedule_type, scheduled_at, status, total_contacts, drip_min_seconds, drip_max_seconds)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+		   filters, schedule_type, scheduled_at, status, total_contacts, drip_min_seconds, drip_max_seconds,
+		   send_start_time, send_end_time)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 		RETURNING id
 	`, companyID, userID, body.Name, primaryMessage, string(variantsJSON), body.InstanceID,
 		body.AudienceType, audienceRef, string(filtersJSON), body.ScheduleType, scheduledAt,
-		status, len(contacts), dripMin, dripMax).Scan(&campaignID)
+		status, len(contacts), dripMin, dripMax, sendStartTime, sendEndTime).Scan(&campaignID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -256,7 +269,7 @@ func APICreateCampaign(c *gin.Context) {
 	}
 
 	if status == "running" {
-		go runCampaign(campaignID, body.InstanceID, variants, dripMin, dripMax)
+		go runCampaign(campaignID, body.InstanceID, variants, dripMin, dripMax, sendStartTime, sendEndTime)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"ok": true, "id": campaignID, "total": len(contacts)})
@@ -407,7 +420,7 @@ func resolveCampaignContacts(companyID, userID, audienceType, audienceRef string
 	return contacts, nil
 }
 
-func runCampaign(campaignID, instanceID string, messageVariants []string, dripMin, dripMax int) {
+func runCampaign(campaignID, instanceID string, messageVariants []string, dripMin, dripMax int, sendStartTime, sendEndTime string) {
 	defer postgres.DB.Exec(`UPDATE campaigns SET status='finished', finished_at=NOW() WHERE id=$1 AND status='running'`, campaignID)
 
 	inst, ok := instance.Global.Get(instanceID)
@@ -443,6 +456,8 @@ func runCampaign(campaignID, instanceID string, messageVariants []string, dripMi
 	nVariants := len(messageVariants)
 
 	for i, p := range list {
+		waitForSendWindow(campaignID, sendStartTime, sendEndTime)
+
 		template := messageVariants[i%nVariants] // rotação circular
 		msg := personalizeMessage(template, p.Name)
 		err := sendTextViaInstance(inst, p.Phone, msg)
@@ -469,6 +484,45 @@ func runCampaign(campaignID, instanceID string, messageVariants []string, dripMi
 	}
 
 	postgres.DB.Exec(`UPDATE campaigns SET status='finished', finished_at=NOW() WHERE id=$1`, campaignID)
+}
+
+// waitForSendWindow blocks until the current time is within [sendStartTime, sendEndTime].
+// Times are "HH:MM" strings. Empty strings mean no restriction.
+func waitForSendWindow(campaignID, startTime, endTime string) {
+	if startTime == "" || endTime == "" {
+		return
+	}
+	startH, startM := parseHHMM(startTime)
+	endH, endM := parseHHMM(endTime)
+	if startH == 0 && startM == 0 && endH == 0 && endM == 0 {
+		return
+	}
+	for {
+		now := time.Now()
+		nowMinutes := now.Hour()*60 + now.Minute()
+		startMinutes := startH*60 + startM
+		endMinutes := endH*60 + endM
+		if nowMinutes >= startMinutes && nowMinutes < endMinutes {
+			return
+		}
+		// Check if campaign was cancelled while waiting
+		var st string
+		if err := postgres.DB.QueryRow(`SELECT status FROM campaigns WHERE id=$1`, campaignID).Scan(&st); err != nil || st != "running" {
+			return
+		}
+		log.Printf("[campaign %s] fora do horário (%s–%s), aguardando...", campaignID, startTime, endTime)
+		time.Sleep(1 * time.Minute)
+	}
+}
+
+func parseHHMM(t string) (int, int) {
+	parts := strings.SplitN(t, ":", 2)
+	if len(parts) != 2 {
+		return 0, 0
+	}
+	h, _ := strconv.Atoi(parts[0])
+	m, _ := strconv.Atoi(parts[1])
+	return h, m
 }
 
 // APIParseContactsFile parseia CSV ou XLSX e retorna [{phone, name}].

@@ -71,6 +71,8 @@ function campaignsPage() {
       schedule_type: 'now',
       scheduled_at: '',
       drip_delay: '30s-1m',
+      send_start_time: '09:00',
+      send_end_time: '18:00',
     },
     saving: false,
     saveError: '',
@@ -641,6 +643,25 @@ function campaignsPage() {
             </label>
           </div>
           <p class="text-xs text-gray-400 mt-2">Cada envio usa um tempo aleatório dentro da faixa — simula comportamento humano e evita bloqueio do WhatsApp</p>
+        </div>
+
+        <!-- Horário de envio -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">Horário de envio</label>
+          <div class="flex items-end gap-3">
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">Das</label>
+              <input type="time" x-model="form.send_start_time"
+                class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+            <span class="text-gray-400 pb-2">às</span>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">Até</label>
+              <input type="time" x-model="form.send_end_time"
+                class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+          </div>
+          <p class="text-xs text-gray-400 mt-2">Mensagens nunca serão enviadas fora deste horário — o disparo pausa e retoma automaticamente</p>
         </div>
 
         <div class="flex gap-4">

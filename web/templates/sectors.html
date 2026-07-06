@@ -1,0 +1,225 @@
+{{ template "layout.html" . }}
+{{ define "title" }}Setores — BotWapp{{ end }}
+{{ define "content" }}
+
+<script>
+const TOKEN = document.querySelector('meta[name="auth-token"]')?.content || '';
+
+function sectorsPage() {
+  return {
+    sectors: [],
+    loading: true,
+
+    showCreate: false,
+    creating: false,
+    createForm: { name: '' },
+
+    showEdit: false,
+    editing: false,
+    editForm: { id: '', name: '' },
+
+    async init() {
+      await this.load();
+    },
+
+    async load() {
+      this.loading = true;
+      try {
+        const r = await fetch('/api/sectors', { headers: { 'Authorization': `Bearer ${TOKEN}` } });
+        this.sectors = await r.json();
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    openCreate() {
+      this.createForm = { name: '' };
+      this.showCreate = true;
+    },
+
+    async submitCreate() {
+      if (!this.createForm.name.trim()) return;
+      this.creating = true;
+      try {
+        const r = await fetch('/api/sectors', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${TOKEN}` },
+          body: JSON.stringify({ name: this.createForm.name.trim() })
+        });
+        if (!r.ok) {
+          const e = await r.json();
+          alert('Erro: ' + (e.error || 'falha ao criar'));
+          return;
+        }
+        this.showCreate = false;
+        await this.load();
+      } finally {
+        this.creating = false;
+      }
+    },
+
+    openEdit(s) {
+      this.editForm = { id: s.id, name: s.name };
+      this.showEdit = true;
+    },
+
+    async submitEdit() {
+      if (!this.editForm.name.trim()) return;
+      this.editing = true;
+      try {
+        const r = await fetch(`/api/sectors/${this.editForm.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${TOKEN}` },
+          body: JSON.stringify({ name: this.editForm.name.trim() })
+        });
+        if (!r.ok) {
+          const e = await r.json();
+          alert('Erro: ' + (e.error || 'falha ao atualizar'));
+          return;
+        }
+        this.showEdit = false;
+        await this.load();
+      } finally {
+        this.editing = false;
+      }
+    },
+
+    async remove(s) {
+      if (!confirm(`Remover o setor "${s.name}"? Os usuários deste setor perderão a associação.`)) return;
+      const r = await fetch(`/api/sectors/${s.id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${TOKEN}` }
+      });
+      if (!r.ok) {
+        const e = await r.json();
+        alert('Erro: ' + (e.error || 'falha ao remover'));
+        return;
+      }
+      await this.load();
+    }
+  };
+}
+</script>
+
+<div x-data="sectorsPage()" x-init="init()" class="overflow-auto h-full">
+<div class="max-w-3xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-xl font-semibold text-gray-900">Setores</h1>
+      <p class="text-sm text-gray-500 mt-0.5">Organize equipes por departamento</p>
+    </div>
+    <button @click="openCreate()"
+      class="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-700 transition-colors">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+      </svg>
+      Novo setor
+    </button>
+  </div>
+
+  <!-- Loading -->
+  <div x-show="loading" class="flex justify-center py-16">
+    <svg class="w-8 h-8 animate-spin text-gray-400" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+    </svg>
+  </div>
+
+  <!-- Empty -->
+  <div x-show="!loading && sectors.length === 0" class="text-center py-16 text-gray-400">
+    <p class="text-4xl mb-3">🗂️</p>
+    <p class="text-sm">Nenhum setor cadastrado.</p>
+  </div>
+
+  <!-- Table -->
+  <div x-show="!loading && sectors.length > 0" class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-gray-100 bg-gray-50 text-xs font-medium text-gray-500 uppercase tracking-wide">
+          <th class="px-5 py-3 text-left">Nome</th>
+          <th class="px-5 py-3 text-center">Usuários</th>
+          <th class="px-5 py-3 text-right">Ações</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="s in sectors" :key="s.id">
+          <tr class="border-b border-gray-50 hover:bg-gray-50 transition-colors last:border-b-0">
+            <td class="px-5 py-3.5">
+              <p class="font-medium text-gray-800" x-text="s.name"></p>
+            </td>
+            <td class="px-5 py-3.5 text-center">
+              <span class="text-gray-600 font-medium" x-text="s.users_count"></span>
+            </td>
+            <td class="px-5 py-3.5 text-right">
+              <div class="flex items-center justify-end gap-2">
+                <button @click="openEdit(s)"
+                  class="text-xs border border-gray-200 text-gray-600 rounded-lg px-3 py-1.5 hover:bg-gray-50 transition-colors font-medium">
+                  Renomear
+                </button>
+                <button @click="remove(s)"
+                  class="text-xs border border-red-100 text-red-400 rounded-lg px-3 py-1.5 hover:bg-red-50 hover:border-red-200 transition-colors">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                  </svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<!-- Modal: Criar setor -->
+<div x-show="showCreate" x-cloak class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">
+  <div class="bg-white rounded-xl border border-gray-200 shadow-xl p-6 w-full max-w-sm">
+    <h2 class="text-base font-semibold text-gray-800 mb-4">Novo setor</h2>
+    <form @submit.prevent="submitCreate()" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Nome do setor</label>
+        <input type="text" x-model="createForm.name" placeholder="ex: Vendas, Suporte, Financeiro" required
+          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <div class="flex gap-2 pt-1">
+        <button type="button" @click="showCreate = false"
+          class="flex-1 border border-gray-300 text-gray-600 rounded-lg px-4 py-2 text-sm hover:bg-gray-50">
+          Cancelar
+        </button>
+        <button type="submit" :disabled="creating"
+          class="flex-1 bg-blue-600 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+          <span x-text="creating ? 'Criando...' : 'Criar setor'"></span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal: Renomear setor -->
+<div x-show="showEdit" x-cloak class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">
+  <div class="bg-white rounded-xl border border-gray-200 shadow-xl p-6 w-full max-w-sm">
+    <h2 class="text-base font-semibold text-gray-800 mb-4">Renomear setor</h2>
+    <form @submit.prevent="submitEdit()" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Nome</label>
+        <input type="text" x-model="editForm.name" required
+          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <div class="flex gap-2 pt-1">
+        <button type="button" @click="showEdit = false"
+          class="flex-1 border border-gray-300 text-gray-600 rounded-lg px-4 py-2 text-sm hover:bg-gray-50">
+          Cancelar
+        </button>
+        <button type="submit" :disabled="editing"
+          class="flex-1 bg-blue-600 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+          <span x-text="editing ? 'Salvando...' : 'Salvar'"></span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+</div>
+{{ end }}

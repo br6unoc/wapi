@@ -1,0 +1,229 @@
+{{ template "layout.html" . }}
+{{ define "title" }}Tags — BotWapp{{ end }}
+{{ define "content" }}
+
+<script>
+const TOKEN = document.querySelector('meta[name="auth-token"]')?.content || '';
+
+const PRESET_COLORS = [
+  '#6366f1','#8b5cf6','#ec4899','#ef4444','#f97316',
+  '#eab308','#22c55e','#14b8a6','#3b82f6','#64748b'
+];
+
+function tagsPage() {
+  return {
+    tags: {{ if .Tags }}[{{ range .Tags }}{ id: '{{ .ID }}', name: {{ printf "%q" .Name }}, color: '{{ .Color }}' },{{ end }}]{{ else }}[]{{ end }},
+
+    showCreate: false,
+    creating: false,
+    createForm: { name: '', color: '#6366f1' },
+    createError: '',
+
+    showEdit: false,
+    editing: false,
+    editForm: { id: '', name: '', color: '' },
+    editError: '',
+
+    presets: PRESET_COLORS,
+
+    openCreate() {
+      this.createForm = { name: '', color: '#6366f1' };
+      this.createError = '';
+      this.showCreate = true;
+    },
+
+    async submitCreate() {
+      if (!this.createForm.name) return;
+      this.creating = true;
+      this.createError = '';
+      try {
+        const r = await fetch('/api/tags', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${TOKEN}` },
+          body: JSON.stringify(this.createForm)
+        });
+        if (!r.ok) { this.createError = 'Tag já existe ou erro ao criar'; return; }
+        const t = await r.json();
+        this.tags.push(t);
+        this.tags.sort((a, b) => a.name.localeCompare(b.name));
+        this.showCreate = false;
+      } finally { this.creating = false; }
+    },
+
+    openEdit(t) {
+      this.editForm = { ...t };
+      this.editError = '';
+      this.showEdit = true;
+    },
+
+    async submitEdit() {
+      this.editing = true;
+      this.editError = '';
+      try {
+        const r = await fetch(`/api/tags/${this.editForm.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${TOKEN}` },
+          body: JSON.stringify({ name: this.editForm.name, color: this.editForm.color })
+        });
+        if (!r.ok) { this.editError = 'Erro ao atualizar'; return; }
+        const idx = this.tags.findIndex(t => t.id === this.editForm.id);
+        if (idx !== -1) this.tags[idx] = { ...this.editForm };
+        this.tags.sort((a, b) => a.name.localeCompare(b.name));
+        this.showEdit = false;
+      } finally { this.editing = false; }
+    },
+
+    async remove(t) {
+      if (!confirm(`Remover a tag "${t.name}"? Os vínculos com contatos serão desfeitos.`)) return;
+      await fetch(`/api/tags/${t.id}`, {
+        method: 'DELETE', headers: { 'Authorization': `Bearer ${TOKEN}` }
+      });
+      this.tags = this.tags.filter(x => x.id !== t.id);
+    }
+  };
+}
+</script>
+
+<div x-data="tagsPage()" class="overflow-auto h-full">
+<div class="max-w-3xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-xl font-semibold text-gray-900">Tags</h1>
+      <p class="text-sm text-gray-500 mt-0.5">Crie etiquetas para classificar seus contatos</p>
+    </div>
+    <button @click="openCreate()"
+      class="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-700 transition-colors">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+      </svg>
+      Nova tag
+    </button>
+  </div>
+
+  <!-- Empty -->
+  <div x-show="tags.length === 0" class="text-center py-16 text-gray-400">
+    <svg class="w-12 h-12 mx-auto mb-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+        d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/>
+    </svg>
+    <p class="text-sm">Nenhuma tag criada.</p>
+    <p class="text-xs mt-1">Crie tags para categorizar seus contatos por produto, interesse ou etapa.</p>
+  </div>
+
+  <!-- Lista -->
+  <div x-show="tags.length > 0" class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+    <template x-for="t in tags" :key="t.id">
+      <div class="flex items-center justify-between px-5 py-3.5 border-b border-gray-50 last:border-b-0 hover:bg-gray-50 transition-colors">
+        <div class="flex items-center gap-3">
+          <span class="w-3 h-3 rounded-full flex-shrink-0" :style="'background:' + t.color"></span>
+          <span class="font-medium text-gray-800 text-sm" x-text="t.name"></span>
+          <span class="text-xs px-2 py-0.5 rounded-full font-medium"
+            :style="'background:' + t.color + '22; color:' + t.color"
+            x-text="t.name"></span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button @click="openEdit(t)"
+            class="text-xs border border-gray-200 text-gray-600 rounded-lg px-3 py-1.5 hover:bg-gray-100 transition-colors font-medium">
+            Editar
+          </button>
+          <button @click="remove(t)"
+            class="text-xs border border-red-100 text-red-400 rounded-lg px-3 py-1.5 hover:bg-red-50 hover:border-red-200 transition-colors">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </template>
+  </div>
+
+</div>
+
+<!-- Modal criar -->
+<div x-show="showCreate" x-cloak class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">
+  <div class="bg-white rounded-xl border border-gray-200 shadow-xl p-6 w-full max-w-sm">
+    <h2 class="text-base font-semibold text-gray-800 mb-4">Nova tag</h2>
+    <form @submit.prevent="submitCreate()" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Nome</label>
+        <input type="text" x-model="createForm.name" placeholder="ex: Produto A" required autofocus
+          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-2">Cor</label>
+        <div class="flex gap-2 flex-wrap">
+          <template x-for="p in presets" :key="p">
+            <button type="button" @click="createForm.color = p"
+              class="w-7 h-7 rounded-full border-2 transition-all"
+              :style="'background:' + p"
+              :class="createForm.color === p ? 'border-gray-800 scale-110' : 'border-transparent'">
+            </button>
+          </template>
+        </div>
+        <div class="flex items-center gap-2 mt-2">
+          <input type="color" x-model="createForm.color" class="w-8 h-8 rounded cursor-pointer border border-gray-200">
+          <span class="text-xs text-gray-400" x-text="createForm.color"></span>
+          <span class="text-xs px-2 py-0.5 rounded-full font-medium"
+            :style="'background:' + createForm.color + '22; color:' + createForm.color"
+            x-text="createForm.name || 'preview'"></span>
+        </div>
+      </div>
+      <div x-show="createError" class="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2" x-text="createError"></div>
+      <div class="flex gap-2 pt-1">
+        <button type="button" @click="showCreate = false"
+          class="flex-1 border border-gray-300 text-gray-600 rounded-lg px-4 py-2 text-sm hover:bg-gray-50">Cancelar</button>
+        <button type="submit" :disabled="creating"
+          class="flex-1 bg-blue-600 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+          <span x-text="creating ? 'Criando...' : 'Criar'"></span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal editar -->
+<div x-show="showEdit" x-cloak class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">
+  <div class="bg-white rounded-xl border border-gray-200 shadow-xl p-6 w-full max-w-sm">
+    <h2 class="text-base font-semibold text-gray-800 mb-4">Editar tag</h2>
+    <form @submit.prevent="submitEdit()" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Nome</label>
+        <input type="text" x-model="editForm.name" required
+          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-2">Cor</label>
+        <div class="flex gap-2 flex-wrap">
+          <template x-for="p in presets" :key="p">
+            <button type="button" @click="editForm.color = p"
+              class="w-7 h-7 rounded-full border-2 transition-all"
+              :style="'background:' + p"
+              :class="editForm.color === p ? 'border-gray-800 scale-110' : 'border-transparent'">
+            </button>
+          </template>
+        </div>
+        <div class="flex items-center gap-2 mt-2">
+          <input type="color" x-model="editForm.color" class="w-8 h-8 rounded cursor-pointer border border-gray-200">
+          <span class="text-xs text-gray-400" x-text="editForm.color"></span>
+          <span class="text-xs px-2 py-0.5 rounded-full font-medium"
+            :style="'background:' + editForm.color + '22; color:' + editForm.color"
+            x-text="editForm.name || 'preview'"></span>
+        </div>
+      </div>
+      <div x-show="editError" class="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2" x-text="editError"></div>
+      <div class="flex gap-2 pt-1">
+        <button type="button" @click="showEdit = false"
+          class="flex-1 border border-gray-300 text-gray-600 rounded-lg px-4 py-2 text-sm hover:bg-gray-50">Cancelar</button>
+        <button type="submit" :disabled="editing"
+          class="flex-1 bg-blue-600 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+          <span x-text="editing ? 'Salvando...' : 'Salvar'"></span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+</div>
+{{ end }}

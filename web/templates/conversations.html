@@ -1,0 +1,955 @@
+{{ template "layout.html" . }}
+{{ define "title" }}Conversas — BotWapp{{ end }}
+{{ define "content" }}
+<style>
+@keyframes recWave {
+  0%, 100% { height: var(--h); }
+  50% { height: calc(var(--h) * 0.3); }
+}
+.rec-bar {
+  height: var(--h);
+  animation: recWave 0.7s ease-in-out infinite;
+}
+</style>
+
+<script>
+const TOKEN = document.querySelector('meta[name="auth-token"]')?.content || '';
+const CURRENT_USER_ID = '{{ .UserID }}';
+
+const STATUS_LABELS = { open: 'Aberta', in_progress: 'Em atendimento', closed: 'Fechada' };
+const STATUS_COLORS = {
+  open:        'bg-blue-50 text-blue-700 border border-blue-200',
+  in_progress: 'bg-amber-50 text-amber-700 border border-amber-200',
+  closed:      'bg-gray-100 text-gray-500',
+};
+const STATUS_DOT = {
+  open:        'bg-blue-400',
+  in_progress: 'bg-amber-400',
+  closed:      'bg-gray-300',
+};
+
+function conversationsPage() {
+  return {
+    conversations: [],
+    activeConv: null,
+    selectedAgentMode: true,
+    messages: [],
+    messageInput: '',
+    sending: false,
+    ws: null,
+    wsStatus: 'connecting',
+    mobilePanel: 'list',
+
+    // filtros
+    filterStatus: 'open',
+    filterSector: '',
+    filterInstance: '',
+    filterUnread: false,
+    filterUser: '',
+    sectors: [],
+    instances: [],
+    users: [],
+
+    // assignment dropdown
+    showAssign: false,
+    showStatusMenu: false,
+
+    init() {
+      this.loadFilters();
+      this.loadConversations();
+      this.connectWS();
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          if (!this.ws || this.ws.readyState !== WebSocket.OPEN) this.connectWS();
+        }
+      });
+      window.addEventListener('online', () => this.connectWS());
+    },
+
+    async loadFilters() {
+      const [sr, ir, ur] = await Promise.all([
+        fetch('/api/sectors', { headers: { 'Authorization': `Bearer ${TOKEN}` } }),
+        fetch('/instances', { headers: { 'Authorization': `Bearer ${TOKEN}` } }),
+        fetch('/api/users', { headers: { 'Authorization': `Bearer ${TOKEN}` } }),
+      ]);
+      if (sr.ok) this.sectors = await sr.json();
+      if (ir.ok) this.instances = await ir.json();
+      if (ur.ok) this.users = await ur.json();
+    },
+
+    async loadConversations() {
+      try {
+        const params = new URLSearchParams();
+        if (this.filterStatus) params.set('status', this.filterStatus);
+        if (this.filterSector) params.set('sector_id', this.filterSector);
+        if (this.filterInstance) params.set('instance_name', this.filterInstance);
+        if (this.filterUnread) params.set('unread', '1');
+        if (this.filterUser) params.set('assigned_user_id', this.filterUser);
+        const resp = await fetch('/api/conversations?' + params, {
+          headers: { 'Authorization': `Bearer ${TOKEN}` }
+        });
+        const data = await resp.json();
+        this.conversations = Array.isArray(data) ? data : [];
+      } catch(e) { console.error('loadConversations:', e); }
+    },
+
+    setFilter(key, val) {
+      this[key] = val;
+      this.loadConversations();
+    },
+
+    statusLabel(s) { return STATUS_LABELS[s] || s; },
+    statusColor(s) { return STATUS_COLORS[s] || 'bg-gray-100 text-gray-500'; },
+    statusDot(s) { return STATUS_DOT[s] || 'bg-gray-300'; },
+
+    async selectConv(conv) {
+      this.activeConv = conv;
+      this.selectedAgentMode = conv.agent_mode ?? true;
+      this.mobilePanel = 'thread';
+      this.messages = [];
+      this.showAssign = false;
+      this.showStatusMenu = false;
+      conv.unread_count = 0;
+      try {
+        const resp = await fetch(`/api/conversations/${conv.instance_name}/${conv.phone}/messages`, {
+          headers: { 'Authorization': `Bearer ${TOKEN}` }
+        });
+        this.messages = await resp.json();
+        this.$nextTick(() => this.scrollToBottom());
+      } catch(e) { console.error('selectConv:', e); }
+      fetch(`/api/conversations/${conv.instance_name}/${conv.phone}/read`, {
+        method: 'POST', headers: { 'Authorization': `Bearer ${TOKEN}` }
+      }).catch(() => {});
+      // notify badge
+      window.dispatchEvent(new CustomEvent('unread-update'));
+    },
+
+    goBack() {
+      this.activeConv = null;
+      this.mobilePanel = 'list';
+      this.messages = [];
+    },
+
+    async changeStatus(status) {
+      if (!this.activeConv) return;
+      this.showStatusMenu = false;
+      await fetch(`/api/conversations/${this.activeConv.instance_name}/${this.activeConv.phone}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${TOKEN}` },
+        body: JSON.stringify({ status })
+      });
+      if (this.activeConv) this.activeConv.conv_status = status;
+      const conv = this.conversations.find(c => c.contact_id === this.activeConv?.contact_id);
+      if (conv) conv.conv_status = status;
+    },
+
+    async assignTo(userId, username) {
+      if (!this.activeConv) return;
+      this.showAssign = false;
+      await fetch(`/api/conversations/${this.activeConv.instance_name}/${this.activeConv.phone}/assign`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${TOKEN}` },
+        body: JSON.stringify({ user_id: userId || null })
+      });
+      if (this.activeConv) {
+        this.activeConv.assigned_user_id = userId || '';
+        this.activeConv.assigned_username = username || '';
+      }
+      const conv = this.conversations.find(c => c.contact_id === this.activeConv?.contact_id);
+      if (conv) { conv.assigned_user_id = userId || ''; conv.assigned_username = username || ''; }
+    },
+
+    connectWS() {
+      if (this.ws && this.ws.readyState < 2) this.ws.close();
+      this.wsStatus = 'connecting';
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${proto}//${location.host}/ws?token=${TOKEN}`);
+      this.ws = ws;
+
+      ws.onopen = () => { this.wsStatus = 'connected'; this.loadConversations(); };
+
+      ws.onmessage = (e) => {
+        let msg; try { msg = JSON.parse(e.data); } catch { return; }
+        if (msg.event === 'ping') return;
+
+        if (msg.event === 'agent_mode_changed') {
+          const d = msg.data;
+          const conv = this.conversations.find(c => c.contact_id === d.contact_id);
+          if (conv) conv.agent_mode = d.agent_mode;
+          if (this.activeConv?.contact_id === d.contact_id) {
+            this.activeConv.agent_mode = d.agent_mode;
+            this.selectedAgentMode = d.agent_mode;
+          }
+          return;
+        }
+
+        if (msg.event === 'conv_status_changed') {
+          const d = msg.data;
+          const conv = this.conversations.find(c => c.contact_id === d.contact_id);
+          if (conv) conv.conv_status = d.status;
+          if (this.activeConv?.contact_id === d.contact_id) this.activeConv.conv_status = d.status;
+          return;
+        }
+
+        if (msg.event === 'message_edited') {
+          const d = msg.data;
+          if (this.activeConv?.contact_id === d.contact_id && this.activeConv?.instance_id === d.instance_id) {
+            const m = this.messages.find(m => m.id === d.id);
+            if (m) { m.content = d.content; m.is_edited = true; }
+          }
+          return;
+        }
+
+        if (msg.event === 'conv_assigned') {
+          const d = msg.data;
+          const conv = this.conversations.find(c => c.contact_id === d.contact_id);
+          if (conv) { conv.assigned_user_id = d.assigned_user_id; conv.assigned_username = d.assigned_username; }
+          if (this.activeConv?.contact_id === d.contact_id) {
+            this.activeConv.assigned_user_id = d.assigned_user_id;
+            this.activeConv.assigned_username = d.assigned_username;
+          }
+          return;
+        }
+
+        if (msg.event !== 'new_message') return;
+        const d = msg.data;
+        const idx = this.conversations.findIndex(c =>
+          c.contact_id === d.contact_id && c.instance_id === d.instance_id
+        );
+        if (idx > -1) {
+          const conv = this.conversations.splice(idx, 1)[0];
+          conv.last_message = d.content;
+          conv.last_direction = d.direction;
+          conv.last_type = d.type;
+          conv.last_message_at = d.created_at;
+          if (d.direction === 'in') {
+            const isActive = this.activeConv?.contact_id === d.contact_id && this.activeConv?.instance_id === d.instance_id;
+            if (!isActive) {
+              conv.unread_count = (conv.unread_count || 0) + 1;
+              window.dispatchEvent(new CustomEvent('unread-update'));
+            } else {
+              fetch(`/api/conversations/${d.instance_name}/${d.phone}/read`, {
+                method: 'POST', headers: { 'Authorization': `Bearer ${TOKEN}` }
+              }).catch(() => {});
+            }
+          }
+          this.conversations.unshift(conv);
+        } else {
+          this.loadConversations();
+        }
+        if (this.activeConv?.contact_id === d.contact_id && this.activeConv?.instance_id === d.instance_id) {
+          if (d.direction === 'out') {
+            const tempIdx = this.messages.findIndex(m => m._pending && m.content === d.content);
+            if (tempIdx > -1) this.messages.splice(tempIdx, 1, d);
+            else this.messages.push(d);
+          } else {
+            this.messages.push(d);
+          }
+          this.$nextTick(() => this.scrollToBottom());
+        }
+      };
+
+      ws.onclose = () => {
+        if (this.ws !== ws) return;
+        this.wsStatus = 'disconnected';
+        setTimeout(() => { if (this.ws === ws) this.connectWS(); }, 3000);
+      };
+      ws.onerror = () => ws.close();
+    },
+
+    async sendMessage() {
+      if (!this.messageInput.trim() || !this.activeConv) return;
+      const text = this.messageInput.trim();
+      this.messageInput = '';
+      const tempId = 'temp-' + Date.now();
+      this.messages.push({ id: tempId, direction: 'out', content: text, type: 'text', created_at: new Date().toISOString(), _pending: true });
+      this.$nextTick(() => this.scrollToBottom());
+      fetch(`/api/conversations/${this.activeConv.instance_name}/${this.activeConv.phone}/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${TOKEN}` },
+        body: JSON.stringify({ message: text })
+      }).then(resp => {
+        if (!resp.ok) {
+          this.messages = this.messages.filter(m => m.id !== tempId);
+          this.messageInput = text;
+          resp.json().catch(() => ({})).then(err => alert('Erro ao enviar: ' + (err.error || resp.status)));
+        }
+      }).catch(e => {
+        this.messages = this.messages.filter(m => m.id !== tempId);
+        this.messageInput = text;
+        alert('Erro ao enviar: ' + e.message);
+      });
+    },
+
+    scrollToBottom() {
+      const el = document.getElementById('msg-list');
+      if (el) el.scrollTop = el.scrollHeight;
+    },
+
+    msgPreview(type, content) {
+      if (type === 'image') return '🖼️ Imagem';
+      if (type === 'audio' || type === 'ptt') return '🎵 Áudio';
+      if (type === 'video') return '🎬 Vídeo';
+      if (type === 'document') return '📄 Documento';
+      return content;
+    },
+
+    formatTime(iso) {
+      if (!iso) return '';
+      return new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    },
+
+    formatDate(iso) {
+      if (!iso) return '';
+      const d = new Date(iso), today = new Date();
+      if (d.toDateString() === today.toDateString()) return 'hoje';
+      const yesterday = new Date(today);
+      yesterday.setDate(today.getDate() - 1);
+      if (d.toDateString() === yesterday.toDateString()) return 'ontem';
+      return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+    },
+
+    // ── Envio de mídia ──────────────────────────────────────
+    mediaFile: null,
+    mediaPreview: null,
+    mediaCaption: '',
+    sendingMedia: false,
+
+    onFileSelected(event) {
+      const f = event.target.files[0];
+      if (!f) return;
+      this.mediaFile = f;
+      const reader = new FileReader();
+      reader.onload = e => { this.mediaPreview = e.target.result; };
+      reader.readAsDataURL(f);
+    },
+
+    clearMedia() {
+      this.mediaFile = null; this.mediaPreview = null; this.mediaCaption = '';
+      const inp = document.getElementById('media-file-input');
+      if (inp) inp.value = '';
+    },
+
+    async sendMedia() {
+      if (!this.mediaFile || !this.activeConv) return;
+      this.sendingMedia = true;
+      const mt = this.mediaFile.type;
+      let msgType = 'document';
+      if (mt.startsWith('audio/')) msgType = 'audio';
+      else if (mt.startsWith('image/')) msgType = 'image';
+      else if (mt.startsWith('video/')) msgType = 'video';
+      const contentMap = { audio: '[áudio]', image: '[imagem]', video: '[vídeo]', document: '[documento]' };
+      const tempId = 'temp-' + Date.now();
+      this.messages.push({ id: tempId, direction: 'out', content: contentMap[msgType] || '[mídia]', type: msgType, media_path: this.mediaPreview, media_name: this.mediaFile.name, created_at: new Date().toISOString(), _pending: true });
+      this.$nextTick(() => this.scrollToBottom());
+      const form = new FormData();
+      form.append('file', this.mediaFile);
+      if (this.mediaCaption) form.append('caption', this.mediaCaption);
+      this.clearMedia();
+      try {
+        const r = await fetch(`/api/conversations/${this.activeConv.instance_name}/${this.activeConv.phone}/send-media`, {
+          method: 'POST', headers: { 'Authorization': `Bearer ${TOKEN}` }, body: form
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          this.messages = this.messages.filter(m => m.id !== tempId);
+          alert('Erro ao enviar: ' + (err.error || r.status));
+        }
+      } catch(e) {
+        this.messages = this.messages.filter(m => m.id !== tempId);
+        alert('Erro ao enviar: ' + e.message);
+      } finally {
+        this.sendingMedia = false;
+      }
+    },
+
+    // ── Gravação de áudio ──────────────────────────────────────
+    recording: false,
+    recordingSeconds: 0,
+    recordingTimer: null,
+    mediaRecorder: null,
+    recordedChunks: [],
+
+    formatRecordingTime(s) {
+      const m = Math.floor(s / 60), sec = s % 60;
+      return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+    },
+
+    async startRecording() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        this.recordedChunks = [];
+        this.recordingSeconds = 0;
+        const mimeType = ['audio/webm;codecs=opus','audio/ogg;codecs=opus','audio/webm','audio/ogg']
+          .find(t => { try { return MediaRecorder.isTypeSupported(t); } catch(e) { return false; } }) || '';
+        const options = mimeType ? { mimeType } : {};
+        this.mediaRecorder = new MediaRecorder(stream, options);
+        this.mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) this.recordedChunks.push(e.data); };
+        this.mediaRecorder.onstop = () => {
+          stream.getTracks().forEach(t => t.stop());
+          if (!this.recordedChunks.length) return;
+          const blob = new Blob(this.recordedChunks, { type: mimeType || 'audio/webm' });
+          const ext = (mimeType || '').includes('ogg') ? 'ogg' : 'webm';
+          const file = new File([blob], `audio_${Date.now()}.${ext}`, { type: blob.type });
+          this.mediaFile = file;
+          this.mediaPreview = URL.createObjectURL(blob);
+          this.recordedChunks = [];
+        };
+        this.mediaRecorder.start();
+        this.recording = true;
+        this.recordingTimer = setInterval(() => {
+          this.recordingSeconds++;
+          if (this.recordingSeconds >= 120) this.stopRecording();
+        }, 1000);
+      } catch(e) {
+        const isPermission = e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError';
+        if (isPermission) {
+          alert('Permissão de microfone negada.\n\niOS: Ajustes → Safari → bot.botwapp.com.br → Microfone → Permitir\n\nAndroid: Configurações do site (🔒 na barra de endereço) → Microfone → Permitir');
+        } else {
+          alert('Microfone indisponível: ' + e.message);
+        }
+      }
+    },
+
+    stopRecording() {
+      if (!this.mediaRecorder || this.mediaRecorder.state === 'inactive') return;
+      clearInterval(this.recordingTimer); this.recordingTimer = null; this.recording = false;
+      this.mediaRecorder.stop();
+    },
+
+    cancelRecording() {
+      clearInterval(this.recordingTimer); this.recordingTimer = null; this.recordingSeconds = 0; this.recording = false;
+      if (this.mediaRecorder) {
+        this.mediaRecorder.ondataavailable = null; this.mediaRecorder.onstop = null;
+        try { this.mediaRecorder.stream?.getTracks().forEach(t => t.stop()); } catch(e) {}
+        try { if (this.mediaRecorder.state !== 'inactive') this.mediaRecorder.stop(); } catch(e) {}
+        this.mediaRecorder = null;
+      }
+      this.recordedChunks = [];
+    },
+
+    async takeover() {
+      if (!this.activeConv) return;
+      const r = await fetch(`/api/conversations/${this.activeConv.instance_name}/${this.activeConv.phone}/takeover`, {
+        method: 'POST', headers: { 'Authorization': `Bearer ${TOKEN}` }
+      });
+      if (r.ok) {
+        const d = await r.json();
+        this.selectedAgentMode = false;
+        if (this.activeConv) {
+          this.activeConv.agent_mode = false;
+          this.activeConv.assigned_user_id = d.assigned_user_id || '';
+          this.activeConv.assigned_username = d.assigned_username || '';
+        }
+        const conv = this.conversations.find(c => c.contact_id === this.activeConv?.contact_id);
+        if (conv) {
+          conv.agent_mode = false;
+          conv.assigned_user_id = d.assigned_user_id || '';
+          conv.assigned_username = d.assigned_username || '';
+        }
+      }
+    },
+
+    async resumeAgent() {
+      if (!this.activeConv) return;
+      const r = await fetch(`/api/conversations/${this.activeConv.instance_name}/${this.activeConv.phone}/resume`, {
+        method: 'POST', headers: { 'Authorization': `Bearer ${TOKEN}` }
+      });
+      if (r.ok) { this.selectedAgentMode = true; if (this.activeConv) this.activeConv.agent_mode = true; }
+    },
+  }
+}
+</script>
+
+<div x-data="conversationsPage()" x-init="init()" class="flex overflow-hidden bg-white" style="height:100%;max-height:100%;">
+
+  <!-- PAINEL ESQUERDO: lista de conversas -->
+  <div class="flex flex-col bg-white border-r border-gray-200 flex-shrink-0 w-full sm:w-80 min-h-0"
+       :class="mobilePanel === 'thread' ? 'hidden sm:flex' : 'flex'">
+
+    <!-- Header + status tabs -->
+    <div class="border-b border-gray-100 bg-white flex-shrink-0">
+      <div class="flex items-center justify-between px-4 py-3">
+        <div class="flex items-center gap-2">
+          <h2 class="text-sm font-semibold text-gray-800">Conversas</h2>
+          <span x-show="wsStatus === 'connected'" class="w-2 h-2 rounded-full bg-green-400 flex-shrink-0"></span>
+          <span x-show="wsStatus === 'connecting'" class="w-2 h-2 rounded-full bg-yellow-400 animate-pulse flex-shrink-0"></span>
+          <span x-show="wsStatus === 'disconnected'" class="w-2 h-2 rounded-full bg-red-400 flex-shrink-0"></span>
+        </div>
+        <button @click="loadConversations()" class="text-gray-400 hover:text-gray-600 p-1 rounded">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Status tabs -->
+      <div class="flex px-3 pb-2 gap-1">
+        <template x-for="s in [{k:'open',l:'Abertas'},{k:'ai',l:'IA'},{k:'closed',l:'Fechadas'}]" :key="s.k">
+          <button @click="setFilter('filterStatus', s.k)"
+            class="flex-1 text-[11px] font-medium px-2 py-1 rounded-lg transition-colors"
+            :class="filterStatus === s.k ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-100'"
+            x-text="s.l"></button>
+        </template>
+      </div>
+
+      <!-- Filtros adicionais -->
+      <div class="px-3 pb-2 flex gap-2 flex-wrap">
+        <select x-model="filterSector" @change="loadConversations()"
+          class="flex-1 min-w-0 text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-400">
+          <option value="">Todos os setores</option>
+          <template x-for="s in sectors" :key="s.id">
+            <option :value="s.id" x-text="s.name"></option>
+          </template>
+        </select>
+        <select x-model="filterInstance" @change="loadConversations()"
+          class="flex-1 min-w-0 text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-400">
+          <option value="">Todas conexões</option>
+          <template x-for="i in instances" :key="i.id">
+            <option :value="i.name" x-text="i.name"></option>
+          </template>
+        </select>
+        <!-- Filtro por atendente — visível só para admin/coord -->
+        <template x-if="'{{ .Role }}' === 'admin' || '{{ .Role }}' === 'super_admin' || '{{ .Role }}' === 'coordinator'">
+          <select x-model="filterUser" @change="loadConversations()"
+            class="flex-1 min-w-0 text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-400">
+            <option value="">Todos atendentes</option>
+            <template x-for="u in users" :key="u.id">
+              <option :value="u.id" x-text="u.username"></option>
+            </template>
+          </select>
+        </template>
+        <button @click="filterUnread = !filterUnread; loadConversations()"
+          class="px-2 py-1.5 rounded-lg border text-xs font-medium transition-colors flex-shrink-0"
+          :class="filterUnread ? 'bg-green-500 text-white border-green-500' : 'border-gray-200 text-gray-500 hover:bg-gray-50'"
+          title="Só não lidas">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Lista -->
+    <div class="flex-1 overflow-y-auto divide-y divide-gray-50">
+      <template x-if="conversations.length === 0">
+        <div class="flex flex-col items-center justify-center h-full text-gray-400 px-6 text-center py-12">
+          <svg class="w-10 h-10 mb-3 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+              d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+          </svg>
+          <p class="text-sm font-medium text-gray-500">Nenhuma conversa</p>
+          <p class="text-xs mt-1">Mensagens recebidas aparecerão aqui</p>
+        </div>
+      </template>
+
+      <template x-for="conv in conversations" :key="conv.contact_id + conv.instance_id">
+        <div @click="selectConv(conv)"
+          class="px-4 py-3 hover:bg-slate-50 cursor-pointer transition-colors"
+          :class="activeConv && activeConv.contact_id === conv.contact_id
+            ? 'bg-blue-50 border-l-2 border-l-blue-500'
+            : 'border-l-2 border-l-transparent'">
+
+          <div class="flex items-start gap-3">
+            <!-- Avatar -->
+            <div class="relative flex-shrink-0">
+              <div class="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold"
+                style="background:linear-gradient(135deg,#4f6ef7,#6b8afb)"
+                x-text="(conv.name || conv.phone).charAt(0).toUpperCase()"></div>
+              <span class="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white"
+                :class="statusDot(conv.conv_status)"></span>
+            </div>
+
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center justify-between mb-0.5">
+                <span class="text-sm font-semibold text-gray-800 truncate mr-2"
+                  x-text="conv.name || conv.phone"></span>
+                <span class="text-[11px] text-gray-400 flex-shrink-0"
+                  x-text="formatDate(conv.last_message_at) !== 'hoje'
+                    ? formatDate(conv.last_message_at)
+                    : formatTime(conv.last_message_at)"></span>
+              </div>
+
+              <div class="flex items-center justify-between gap-2">
+                <p class="text-xs text-gray-500 truncate flex-1">
+                  <span x-show="conv.last_direction === 'out'" class="text-blue-500 font-medium">Você: </span>
+                  <span x-text="msgPreview(conv.last_type, conv.last_message)"></span>
+                </p>
+                <template x-if="conv.unread_count > 0">
+                  <span class="flex-shrink-0 min-w-[20px] h-5 rounded-full bg-green-500 text-white text-[10px] font-bold flex items-center justify-center px-1.5"
+                    x-text="conv.unread_count > 99 ? '99+' : conv.unread_count"></span>
+                </template>
+              </div>
+
+              <div class="mt-1 flex items-center justify-between">
+                <div class="flex items-center gap-1">
+                  <span class="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0"></span>
+                  <span class="text-[10px] text-gray-400" x-text="conv.instance_name"></span>
+                </div>
+                <template x-if="conv.assigned_username">
+                  <span class="text-[10px] text-indigo-500 font-medium truncate max-w-[60px]" x-text="conv.assigned_username"></span>
+                </template>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- PAINEL DIREITO: thread -->
+  <div class="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden"
+       style="background:#f0f2f5"
+       :class="mobilePanel === 'list' ? 'hidden sm:flex' : 'flex'">
+
+    <!-- Header -->
+    <div class="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 flex-shrink-0 shadow-sm">
+      <button @click="goBack()" class="sm:hidden text-gray-400 hover:text-gray-700 mr-1 flex-shrink-0">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        </svg>
+      </button>
+
+      <template x-if="activeConv">
+        <div class="flex items-center gap-2 flex-1 min-w-0 overflow-hidden">
+          <!-- Avatar -->
+          <div class="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 text-white text-sm font-bold"
+            style="background:linear-gradient(135deg,#4f6ef7,#6b8afb)"
+            x-text="(activeConv.name || activeConv.phone).charAt(0).toUpperCase()"></div>
+
+          <!-- Nome + conexão -->
+          <div class="min-w-0 flex-1">
+            <p class="text-sm font-semibold text-gray-800 truncate" x-text="activeConv.name || activeConv.phone"></p>
+            <p class="text-xs text-gray-400">+<span x-text="activeConv.phone"></span> · <span x-text="activeConv.instance_name"></span></p>
+          </div>
+
+          <!-- Status dropdown -->
+          <div class="relative flex-shrink-0" @click.outside="showStatusMenu = false">
+            <button @click="showStatusMenu = !showStatusMenu"
+              class="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border transition-colors"
+              :class="statusColor(activeConv.conv_status)">
+              <span x-text="statusLabel(activeConv.conv_status)"></span>
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+              </svg>
+            </button>
+            <div x-show="showStatusMenu" x-cloak
+              class="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 min-w-[160px] py-1">
+              <button @click="changeStatus('open')" class="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-blue-400"></span> Aberta
+              </button>
+              <button @click="changeStatus('in_progress')" class="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-amber-400"></span> Em atendimento
+              </button>
+              <button @click="changeStatus('closed')" class="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-gray-300"></span> Fechada
+              </button>
+            </div>
+          </div>
+
+          <!-- Assign dropdown -->
+          <div class="relative flex-shrink-0" @click.outside="showAssign = false">
+            <button @click="showAssign = !showAssign"
+              class="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+              </svg>
+              <span x-text="activeConv.assigned_username || 'Atribuir'" class="max-w-[70px] truncate"></span>
+            </button>
+            <div x-show="showAssign" x-cloak
+              class="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 min-w-[160px] py-1 max-h-48 overflow-y-auto">
+              <button @click="assignTo('', '')" class="w-full text-left px-3 py-2 text-sm text-gray-500 hover:bg-gray-50">
+                Nenhum
+              </button>
+              <template x-for="u in users" :key="u.id">
+                <button @click="assignTo(u.id, u.username)"
+                  class="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2">
+                  <span class="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-bold flex-shrink-0"
+                    x-text="u.username.charAt(0).toUpperCase()"></span>
+                  <span x-text="u.username" class="truncate"></span>
+                </button>
+              </template>
+            </div>
+          </div>
+
+          <!-- Agent mode -->
+          <div class="flex items-center gap-1.5 flex-shrink-0">
+            <button x-show="selectedAgentMode || (!activeConv.assigned_user_id || activeConv.assigned_user_id !== CURRENT_USER_ID)" @click="takeover()"
+              class="text-xs border border-amber-200 text-amber-600 rounded-lg px-2.5 py-1 hover:bg-amber-50 transition-colors font-medium hidden sm:block">
+              Assumir
+            </button>
+            <button x-show="!selectedAgentMode && activeConv.assigned_user_id === CURRENT_USER_ID" @click="resumeAgent()"
+              class="text-xs border border-blue-200 text-blue-600 rounded-lg px-2.5 py-1 hover:bg-blue-50 transition-colors font-medium hidden sm:block">
+              → Agente
+            </button>
+            <button x-show="activeConv.conv_status !== 'closed'" @click="changeStatus('closed')"
+              class="text-xs border border-green-200 text-green-700 rounded-lg px-2.5 py-1 hover:bg-green-50 transition-colors font-medium hidden sm:block">
+              ✓ Resolver
+            </button>
+            <button x-show="activeConv.conv_status === 'closed'" @click="changeStatus('open')"
+              class="text-xs border border-gray-300 text-gray-500 rounded-lg px-2.5 py-1 hover:bg-gray-50 transition-colors font-medium hidden sm:block">
+              ↩ Reabrir
+            </button>
+          </div>
+        </div>
+      </template>
+
+      <template x-if="!activeConv">
+        <p class="text-sm text-gray-400 hidden sm:block">Selecione uma conversa</p>
+      </template>
+    </div>
+
+    <!-- Mensagens -->
+    <div id="msg-list" class="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-1.5">
+      <template x-if="!activeConv">
+        <div class="flex flex-col items-center justify-center h-full text-gray-300">
+          <svg class="w-16 h-16 mb-3 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1"
+              d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+          </svg>
+          <p class="text-sm">Selecione uma conversa para começar</p>
+        </div>
+      </template>
+
+      <template x-for="msg in messages" :key="msg.id">
+        <div class="flex" :class="msg.direction === 'out' ? 'justify-end' : 'justify-start'">
+          <div class="max-w-[75%] sm:max-w-md px-3.5 py-2 rounded-2xl text-sm shadow-sm"
+            :class="msg.direction === 'out'
+              ? 'bg-[#dcf8c6] text-gray-800 rounded-br-sm'
+              : 'bg-white text-gray-800 rounded-bl-sm border border-gray-100'">
+
+            <template x-if="msg.type === 'image'">
+              <div>
+                <div x-show="!!msg.media_path">
+                  <a :href="msg.media_path" target="_blank" rel="noopener">
+                    <img :src="msg.media_path" class="rounded-xl max-w-[240px] max-h-[320px] object-cover cursor-pointer" loading="lazy" />
+                  </a>
+                </div>
+                <div x-show="!msg.media_path" class="flex items-center gap-2 text-gray-500">
+                  <span class="text-lg">🖼️</span><span>Imagem</span>
+                </div>
+                <p x-show="msg.content && msg.content !== '[imagem]'" class="text-sm mt-1 break-words" x-text="msg.content"></p>
+              </div>
+            </template>
+
+            <template x-if="msg.type === 'video'">
+              <div>
+                <div x-show="!!msg.media_path">
+                  <video controls preload="metadata" class="rounded-xl max-w-[280px] max-h-[320px]">
+                    <source :src="msg.media_path" type="video/mp4">
+                  </video>
+                </div>
+                <div x-show="!msg.media_path" class="flex items-center gap-2 text-gray-500">
+                  <span class="text-lg">🎬</span><span>Vídeo</span>
+                </div>
+                <p x-show="msg.content && msg.content !== '[vídeo]'" class="text-sm mt-1 break-words" x-text="msg.content"></p>
+              </div>
+            </template>
+
+            <template x-if="msg.type === 'document'">
+              <div>
+                <a x-show="!!msg.media_path" :href="msg.media_path" :download="msg.media_name || 'documento'"
+                  class="flex items-center gap-2.5 px-3 py-2.5 bg-gray-50 rounded-xl border border-gray-200 hover:bg-gray-100 transition-colors max-w-[240px]">
+                  <svg class="w-8 h-8 text-blue-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                  </svg>
+                  <div class="min-w-0">
+                    <p class="text-xs font-medium text-gray-700 truncate" x-text="msg.media_name || 'Documento'"></p>
+                    <p class="text-[10px] text-gray-400">Toque para baixar</p>
+                  </div>
+                </a>
+                <div x-show="!msg.media_path" class="flex items-center gap-2 text-gray-500">
+                  <span class="text-lg">📄</span><span x-text="msg.media_name || 'Documento'"></span>
+                </div>
+              </div>
+            </template>
+
+            <template x-if="msg.type === 'audio' || msg.type === 'ptt'">
+              <div class="space-y-2" x-data="{ transcribing: false, transcribed: msg.content !== '[áudio]' && msg.content !== '' }">
+                <template x-if="msg.media_path">
+                  <audio controls preload="metadata" class="w-full max-w-xs h-8" style="min-width:200px">
+                    <source :src="msg.media_path" type="audio/ogg">
+                    <source :src="msg.media_path" type="audio/webm">
+                  </audio>
+                </template>
+                <template x-if="!msg.media_path">
+                  <div class="flex items-center gap-2 text-gray-500"><span class="text-lg">🎵</span><span>Áudio</span></div>
+                </template>
+                <template x-if="transcribed">
+                  <p class="text-xs text-gray-600 italic border-l-2 border-gray-300 pl-2" x-text="msg.content"></p>
+                </template>
+                <template x-if="!transcribed && msg.media_path">
+                  <button
+                    @click="transcribing = true; fetch('/api/messages/' + msg.id + '/transcribe', { method: 'POST', headers: { 'Authorization': 'Bearer ' + TOKEN } }).then(r => r.json()).then(d => { if (d.text) { msg.content = d.text; transcribed = true; } }).finally(() => transcribing = false)"
+                    :disabled="transcribing"
+                    class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors"
+                    :class="transcribing ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-blue-50 hover:bg-blue-100 text-blue-600'">
+                    <svg x-show="!transcribing" class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                    <svg x-show="transcribing" class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                    </svg>
+                    <span x-text="transcribing ? 'Transcrevendo...' : 'Transcrever'"></span>
+                  </button>
+                </template>
+              </div>
+            </template>
+
+            <template x-if="msg.type === 'text' || msg.type === ''">
+              <div>
+                <p x-text="msg.content" class="break-words whitespace-pre-wrap leading-relaxed"></p>
+                <template x-if="msg.is_edited">
+                  <span class="text-[10px] text-gray-400 italic">editado</span>
+                </template>
+              </div>
+            </template>
+
+            <div class="flex items-center justify-end gap-1 mt-1">
+              <span class="text-[10px]" :class="msg.direction === 'out' ? 'text-gray-500' : 'text-gray-400'"
+                x-text="formatTime(msg.created_at)"></span>
+              <template x-if="msg.direction === 'out'">
+                <svg class="w-3 h-3 text-blue-500" fill="currentColor" viewBox="0 0 16 16">
+                  <path d="M12.354 4.354a.5.5 0 000-.708l-.708-.708a.5.5 0 00-.707.001L5.5 9.793 3.561 7.854a.5.5 0 10-.708.708l2.647 2.646a.5.5 0 00.708 0l6.146-6.854z"/>
+                  <path d="M6.5 11.793L3.207 8.5l.708-.708 3.585 3.586-.707.707z"/>
+                </svg>
+              </template>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Input -->
+    <div class="bg-white border-t border-gray-100 flex-shrink-0" style="padding-bottom:max(12px,env(safe-area-inset-bottom));">
+
+      <div x-show="!!mediaFile" x-cloak class="px-4 pt-3 pb-2 border-b border-gray-100">
+        <div class="flex items-start gap-3">
+          <div class="relative flex-shrink-0">
+            <img x-show="mediaFile && mediaFile.type.startsWith('image/')" :src="mediaPreview" class="w-20 h-20 object-cover rounded-lg border border-gray-200" />
+            <div x-show="mediaFile && mediaFile.type.startsWith('video/')" class="w-20 h-20 bg-gray-900 rounded-lg flex items-center justify-center">
+              <svg class="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            </div>
+            <div x-show="mediaFile && mediaFile.type.startsWith('audio/')" class="w-20 h-20 bg-indigo-900 rounded-lg flex items-center justify-center">
+              <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z"/>
+              </svg>
+            </div>
+            <div x-show="mediaFile && !mediaFile.type.startsWith('image/') && !mediaFile.type.startsWith('video/') && !mediaFile.type.startsWith('audio/')" class="w-20 h-20 bg-gray-700 rounded-lg flex items-center justify-center">
+              <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+              </svg>
+            </div>
+            <button @click="clearMedia()" class="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-700 rounded-full flex items-center justify-center text-white hover:bg-gray-900">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+          <div class="flex-1 min-w-0">
+            <p class="text-xs font-medium text-gray-700 truncate" x-text="mediaFile && mediaFile.name"></p>
+            <p class="text-[10px] text-gray-400 mb-2" x-text="mediaFile ? (mediaFile.size > 1048576 ? (mediaFile.size/1048576).toFixed(1)+'MB' : (mediaFile.size/1024).toFixed(0)+'KB') : ''"></p>
+            <div x-show="mediaFile && mediaFile.type.startsWith('audio/')" class="mb-2">
+              <audio :src="mediaPreview" controls preload="metadata" class="w-full h-8" style="min-width:160px"></audio>
+              <p class="text-[10px] text-indigo-600 mt-1">Será convertido para OGG/Opus automaticamente</p>
+            </div>
+            <input x-show="mediaFile && !mediaFile.type.startsWith('audio/')"
+              x-model="mediaCaption" type="text" placeholder="Legenda (opcional)"
+              class="w-full text-sm bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+          </div>
+          <button @click="sendMedia()" :disabled="sendingMedia"
+            class="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all"
+            :class="sendingMedia ? 'bg-gray-200 text-gray-400' : 'bg-green-500 hover:bg-green-600 text-white shadow-sm'">
+            <svg x-show="!sendingMedia" class="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z"/>
+            </svg>
+            <svg x-show="sendingMedia" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <template x-if="activeConv">
+        <div>
+          <div x-show="recording" class="flex items-center gap-2 px-4 py-3">
+            <button @click="cancelRecording()" class="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center bg-gray-100 hover:bg-red-100 text-gray-500 hover:text-red-500 transition-colors">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+              </svg>
+            </button>
+            <div class="flex-1 flex items-center gap-3 bg-red-50 border border-red-200 rounded-2xl px-4 py-2.5">
+              <span class="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse flex-shrink-0"></span>
+              <span class="text-sm font-medium text-red-600 tabular-nums" x-text="formatRecordingTime(recordingSeconds)"></span>
+              <div class="flex items-end gap-px flex-1 h-5">
+                <div class="w-1 bg-red-400 rounded-full rec-bar" style="--h:6px"></div>
+                <div class="w-1 bg-red-400 rounded-full rec-bar" style="--h:12px;animation-delay:.1s"></div>
+                <div class="w-1 bg-red-400 rounded-full rec-bar" style="--h:16px;animation-delay:.2s"></div>
+                <div class="w-1 bg-red-400 rounded-full rec-bar" style="--h:10px;animation-delay:.3s"></div>
+                <div class="w-1 bg-red-400 rounded-full rec-bar" style="--h:6px;animation-delay:.4s"></div>
+                <div class="w-1 bg-red-400 rounded-full rec-bar" style="--h:14px;animation-delay:.15s"></div>
+                <div class="w-1 bg-red-400 rounded-full rec-bar" style="--h:8px;animation-delay:.25s"></div>
+                <div class="w-1 bg-red-400 rounded-full rec-bar" style="--h:16px;animation-delay:.35s"></div>
+              </div>
+              <span class="text-xs text-red-400 flex-shrink-0">Gravando...</span>
+            </div>
+            <button @click="stopRecording()" class="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center bg-green-500 hover:bg-green-600 text-white shadow-sm transition-colors">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+              </svg>
+            </button>
+          </div>
+
+          <!-- Banner conversa fechada -->
+          <div x-show="activeConv && activeConv.conv_status === 'closed'" class="flex items-center justify-between px-4 py-3 bg-gray-50 border-t border-gray-200">
+            <span class="text-sm text-gray-400">Conversa encerrada</span>
+            <button @click="changeStatus('open')" class="text-xs border border-gray-300 text-gray-500 rounded-lg px-3 py-1.5 hover:bg-gray-100 transition-colors font-medium">↩ Reabrir</button>
+          </div>
+
+          <div x-show="!recording && (!activeConv || activeConv.conv_status !== 'closed')" class="flex items-end gap-2 px-4 py-3">
+            <input id="media-file-input" type="file" accept="image/*,video/*,audio/*" class="hidden" @change="onFileSelected($event)"/>
+            <button @click="document.getElementById('media-file-input').click()"
+              class="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center bg-gray-100 hover:bg-gray-200 text-gray-500 transition-colors">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
+              </svg>
+            </button>
+            <textarea
+              x-model="messageInput"
+              @keydown.enter.prevent="!$event.shiftKey && sendMessage()"
+              placeholder="Digite uma mensagem..."
+              :disabled="sending"
+              rows="1"
+              @input="$el.style.height='auto'; $el.style.height=Math.min($el.scrollHeight,120)+'px'"
+              class="flex-1 bg-gray-50 border border-gray-200 rounded-2xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:bg-white transition-colors disabled:opacity-50 resize-none overflow-hidden min-h-[42px]"
+              style="max-height:120px"></textarea>
+            <button x-show="!!messageInput.trim()" @click="sendMessage()" :disabled="sending"
+              class="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center transition-all bg-green-500 hover:bg-green-600 text-white shadow-sm">
+              <svg x-show="!sending" class="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z"/>
+              </svg>
+              <svg x-show="sending" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+              </svg>
+            </button>
+            <button x-show="!messageInput.trim()" @click="startRecording()"
+              class="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center transition-all bg-gray-200 hover:bg-gray-300 text-gray-600">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4M12 3a4 4 0 014 4v4a4 4 0 01-8 0V7a4 4 0 014-4z"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </template>
+      <template x-if="!activeConv">
+        <p class="text-center text-xs text-gray-300 py-3 hidden sm:block">Selecione uma conversa para responder</p>
+      </template>
+    </div>
+  </div>
+</div>
+{{ end }}

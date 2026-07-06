@@ -1,0 +1,471 @@
+package service
+
+import (
+	"bytes"
+	"context"
+	"encoding/binary"
+        "log"
+	"fmt"
+	"math/rand"
+	"strings"
+        "os"
+        "os/exec"
+	"time"
+	"botwapp/internal/instance"
+
+	"go.mau.fi/whatsmeow"
+	waProto "go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/types"
+	"google.golang.org/protobuf/proto"
+)
+
+// Helper: Criar JID corretamente (grupo ou contato)
+func parseJID(number string) types.JID {
+	// Se já tem @, fazer parse direto
+	if strings.Contains(number, "@") {
+		jid, _ := types.ParseJID(number)
+		return jid
+	}
+	
+	// Se é número de grupo (mais de 15 dígitos), adicionar @g.us
+	if len(number) > 15 {
+		return types.NewJID(number, types.GroupServer)
+	}
+	
+	// Caso contrário, é contato normal
+	return types.NewJID(number, types.DefaultUserServer)
+}
+
+func SendText(inst *instance.Instance, to, message string) error {
+	if !inst.WAClient.IsConnected() {
+		return fmt.Errorf("instância não conectada")
+	}
+
+	jid := parseJID(to)
+
+	inst.WAClient.SendPresence(context.Background(), types.PresenceAvailable)
+	time.Sleep(500 * time.Millisecond)
+
+	inst.WAClient.SendChatPresence(context.Background(), jid, types.ChatPresenceComposing, types.ChatPresenceMediaText)
+
+	delay := rand.Intn(inst.TypingDelayMax-inst.TypingDelayMin) + inst.TypingDelayMin
+	time.Sleep(time.Duration(delay) * time.Millisecond)
+
+	inst.WAClient.SendChatPresence(context.Background(), jid, types.ChatPresencePaused, types.ChatPresenceMediaText)
+
+	msg := &waProto.Message{
+		Conversation: proto.String(message),
+	}
+
+	_, err := inst.WAClient.SendMessage(context.Background(), jid, msg)
+	if err != nil {
+		return fmt.Errorf("erro ao enviar mensagem: %w", err)
+	}
+
+	return nil
+}
+
+func SendMedia(inst *instance.Instance, to string, data []byte, mimetype, filename, caption string, isAudio bool) error {
+	if !inst.WAClient.IsConnected() {
+		return fmt.Errorf("instância não conectada")
+	}
+
+	jid := parseJID(to)
+
+	inst.WAClient.SendPresence(context.Background(), types.PresenceAvailable)
+	time.Sleep(500 * time.Millisecond)
+
+	if isAudio {
+		inst.WAClient.SendChatPresence(context.Background(), jid, types.ChatPresenceComposing, types.ChatPresenceMediaAudio)
+	} else {
+		inst.WAClient.SendChatPresence(context.Background(), jid, types.ChatPresenceComposing, types.ChatPresenceMediaText)
+	}
+
+	delay := rand.Intn(inst.TypingDelayMax-inst.TypingDelayMin) + inst.TypingDelayMin
+	// Comprimir vídeos > 16MB automaticamente
+	if strings.HasPrefix(mimetype, "video/") {
+		log.Printf("[CONVERT] Converting video to mp4...")
+		converted, _, convErr := compressVideo(data)
+		if convErr == nil && len(converted) > 0 {
+			data = converted
+			mimetype = "video/mp4"
+			log.Printf("[CONVERT] Success")
+		}
+        }
+	time.Sleep(time.Duration(delay) * time.Millisecond)
+
+	var uploadType whatsmeow.MediaType
+	if isAudio {
+		uploadType = whatsmeow.MediaAudio
+	} else if strings.HasPrefix(mimetype, "image/") {
+		uploadType = whatsmeow.MediaImage
+	} else if strings.HasPrefix(mimetype, "video/") {
+		uploadType = whatsmeow.MediaVideo
+	} else {
+		uploadType = whatsmeow.MediaDocument
+	}
+
+	uploaded, err := inst.WAClient.Upload(context.Background(), data, uploadType)
+	if err != nil {
+		log.Printf("[ERROR] Upload failed - mimetype: %s, isAudio: %v, error: %v", mimetype, isAudio, err)
+		return fmt.Errorf("erro ao fazer upload: %w", err)
+	}
+	log.Printf("[UPLOAD] OK - mimetype: %s, type: %v, size: %d", mimetype, uploadType, len(data))
+
+	var msg *waProto.Message
+
+	if isAudio {
+		secs := getAudioDurationSeconds(data)
+		waveform := generateWaveform(data)
+		msg = &waProto.Message{
+			AudioMessage: &waProto.AudioMessage{
+				URL:           proto.String(uploaded.URL),
+				DirectPath:    proto.String(uploaded.DirectPath),
+				MediaKey:      uploaded.MediaKey,
+				FileEncSHA256: uploaded.FileEncSHA256,
+				FileSHA256:    uploaded.FileSHA256,
+				FileLength:    &uploaded.FileLength,
+				Mimetype:      proto.String("audio/ogg; codecs=opus"),
+				Seconds:       proto.Uint32(secs),
+				PTT:           proto.Bool(true),
+				Waveform:      waveform,
+			},
+		}
+	} else if strings.HasPrefix(mimetype, "image/") {
+		msg = &waProto.Message{
+			ImageMessage: &waProto.ImageMessage{
+				URL:           proto.String(uploaded.URL),
+				DirectPath:    proto.String(uploaded.DirectPath),
+				MediaKey:      uploaded.MediaKey,
+				FileEncSHA256: uploaded.FileEncSHA256,
+				FileSHA256:    uploaded.FileSHA256,
+				FileLength:    &uploaded.FileLength,
+				Mimetype:      proto.String(mimetype),
+				Caption:       proto.String(caption),
+			},
+		}
+	} else if strings.HasPrefix(mimetype, "video/") {
+		msg = &waProto.Message{
+			VideoMessage: &waProto.VideoMessage{
+				URL:           proto.String(uploaded.URL),
+				DirectPath:    proto.String(uploaded.DirectPath),
+				MediaKey:      uploaded.MediaKey,
+				FileEncSHA256: uploaded.FileEncSHA256,
+				FileSHA256:    uploaded.FileSHA256,
+				FileLength:    &uploaded.FileLength,
+				Mimetype:      proto.String(mimetype),
+				Caption:       proto.String(caption),
+			},
+		}
+	} else {
+		msg = &waProto.Message{
+			DocumentMessage: &waProto.DocumentMessage{
+				URL:           proto.String(uploaded.URL),
+				DirectPath:    proto.String(uploaded.DirectPath),
+				MediaKey:      uploaded.MediaKey,
+				FileEncSHA256: uploaded.FileEncSHA256,
+				FileSHA256:    uploaded.FileSHA256,
+				FileLength:    &uploaded.FileLength,
+				Mimetype:      proto.String(mimetype),
+				FileName:      proto.String(filename),
+				Caption:       proto.String(caption),
+			},
+		}
+	}
+        log.Printf("[DEBUG] Sending message - type: %s, size: %d, jid: %s", mimetype, len(data), jid.String())
+
+	_, err = inst.WAClient.SendMessage(context.Background(), jid, msg)
+	if err != nil {
+		return fmt.Errorf("erro ao enviar mídia: %w", err)
+	}
+
+        log.Printf("[DEBUG] Message sent successfully")
+	return nil
+}
+
+func GetGroups(inst *instance.Instance) ([]map[string]interface{}, error) {
+	if !inst.WAClient.IsConnected() {
+		return nil, fmt.Errorf("instância não conectada")
+	}
+
+	groups, err := inst.WAClient.GetJoinedGroups(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("erro ao buscar grupos: %w", err)
+	}
+
+	result := make([]map[string]interface{}, 0, len(groups))
+	for _, group := range groups {
+		result = append(result, map[string]interface{}{
+			"id":           group.JID.User, // ID do grupo (sem @g.us)
+			"name":         group.Name,
+			"participants": len(group.Participants),
+		})
+	}
+
+	return result, nil
+}
+
+// getAudioDurationSeconds retorna a duração em segundos de um arquivo de áudio usando ffprobe.
+func getAudioDurationSeconds(data []byte) uint32 {
+	tmp, err := os.CreateTemp("", "dur-*.ogg")
+	if err != nil {
+		return 0
+	}
+	defer os.Remove(tmp.Name())
+	tmp.Write(data)
+	tmp.Close()
+
+	out, err := exec.Command("ffprobe",
+		"-v", "quiet",
+		"-show_entries", "format=duration",
+		"-of", "csv=p=0",
+		tmp.Name(),
+	).Output()
+	if err != nil {
+		return 0
+	}
+	var secs float64
+	fmt.Sscanf(strings.TrimSpace(string(out)), "%f", &secs)
+	return uint32(secs)
+}
+
+// generateWaveform gera 64 amostras de amplitude (0-255) para o campo Waveform do WhatsApp.
+func generateWaveform(data []byte) []byte {
+	const samples = 64
+
+	tmp, err := os.CreateTemp("", "wf-in-*.ogg")
+	if err != nil {
+		return make([]byte, samples)
+	}
+	defer os.Remove(tmp.Name())
+	tmp.Write(data)
+	tmp.Close()
+
+	// Extrai PCM 16-bit mono 8kHz como raw bytes
+	tmpPCM, err := os.CreateTemp("", "wf-pcm-*.raw")
+	if err != nil {
+		return make([]byte, samples)
+	}
+	defer os.Remove(tmpPCM.Name())
+	tmpPCM.Close()
+
+	err = exec.Command("ffmpeg", "-y",
+		"-i", tmp.Name(),
+		"-f", "s16le", "-ac", "1", "-ar", "8000",
+		tmpPCM.Name(),
+	).Run()
+	if err != nil {
+		return make([]byte, samples)
+	}
+
+	pcm, err := os.ReadFile(tmpPCM.Name())
+	if err != nil || len(pcm) < 2 {
+		return make([]byte, samples)
+	}
+
+	// Calcula RMS por segmento
+	totalFrames := len(pcm) / 2
+	segSize := totalFrames / samples
+	if segSize < 1 {
+		segSize = 1
+	}
+
+	waveform := make([]byte, samples)
+	var maxRMS float64
+
+	rmsValues := make([]float64, samples)
+	for i := 0; i < samples; i++ {
+		start := i * segSize * 2
+		end := start + segSize*2
+		if end > len(pcm) {
+			end = len(pcm)
+		}
+		if start >= end {
+			break
+		}
+		var sumSq float64
+		count := 0
+		for j := start; j+1 < end; j += 2 {
+			sample := float64(int16(uint16(pcm[j]) | uint16(pcm[j+1])<<8))
+			sumSq += sample * sample
+			count++
+		}
+		if count > 0 {
+			rms := sumSq / float64(count)
+			rmsValues[i] = rms
+			if rms > maxRMS {
+				maxRMS = rms
+			}
+		}
+	}
+
+	if maxRMS > 0 {
+		for i, rms := range rmsValues {
+			waveform[i] = byte(rms / maxRMS * 255)
+		}
+	}
+
+	return waveform
+}
+
+// ConvertToOpus converte qualquer áudio para OGG/Opus (formato aceito pelo WhatsApp iOS e Android).
+// Após a conversão, corrige as granule positions do OGG conforme RFC 7845 (adiciona pre_skip),
+// necessário para reprodução no WhatsApp quando o input é MP4/AAC (iOS MediaRecorder).
+func ConvertToOpus(data []byte) ([]byte, error) {
+	tmpIn, err := os.CreateTemp("", "audio-in-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(tmpIn.Name())
+	if _, err := tmpIn.Write(data); err != nil {
+		return nil, err
+	}
+	tmpIn.Close()
+
+	tmpOut, err := os.CreateTemp("", "audio-out-*.ogg")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(tmpOut.Name())
+	tmpOut.Close()
+
+	cmd := exec.Command("ffmpeg", "-y",
+		"-i", tmpIn.Name(),
+		"-c:a", "libopus",
+		"-b:a", "64k",
+		"-ar", "48000",
+		"-ac", "1",
+		"-f", "ogg",
+		tmpOut.Name(),
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("ffmpeg: %w — %s", err, string(out))
+	}
+
+	converted, err := os.ReadFile(tmpOut.Name())
+	if err != nil {
+		return nil, err
+	}
+
+	// Corrige granule positions: ffmpeg omite pre_skip ao converter de MP4/AAC,
+	// gerando OGG inválido conforme RFC 7845 que o WhatsApp rejeita.
+	converted = fixOggOpusGranules(converted)
+
+	log.Printf("[AUDIO] Converted to OGG/Opus: %d → %d bytes", len(data), len(converted))
+	return converted, nil
+}
+
+// fixOggOpusGranules adiciona o valor de pre_skip (do OpusHead) a todas as granule
+// positions de páginas de áudio no arquivo OGG, conformando com RFC 7845 Section 4.
+func fixOggOpusGranules(data []byte) []byte {
+	// Lê pre_skip do OpusHead
+	headIdx := bytes.Index(data, []byte("OpusHead"))
+	if headIdx < 0 || headIdx+12 > len(data) {
+		return data
+	}
+	preSkip := uint64(binary.LittleEndian.Uint16(data[headIdx+10:]))
+	if preSkip == 0 {
+		return data
+	}
+
+	result := make([]byte, len(data))
+	copy(result, data)
+
+	i := 0
+	for i < len(result)-27 {
+		if result[i] != 'O' || result[i+1] != 'g' || result[i+2] != 'g' || result[i+3] != 'S' {
+			i++
+			continue
+		}
+		headerType := result[i+5]
+		granule := int64(binary.LittleEndian.Uint64(result[i+6:]))
+		numSegs := int(result[i+26])
+		if i+27+numSegs > len(result) {
+			break
+		}
+		payloadSize := 0
+		for _, s := range result[i+27 : i+27+numSegs] {
+			payloadSize += int(s)
+		}
+		pageEnd := i + 27 + numSegs + payloadSize
+
+		// Pula páginas BOS (beginning of stream)
+		if headerType&0x02 != 0 {
+			i = pageEnd
+			continue
+		}
+
+		// Pula páginas de header (OpusHead, OpusTags)
+		isHeader := false
+		if payloadSize >= 8 {
+			start := result[i+27+numSegs : i+27+numSegs+8]
+			isHeader = bytes.HasPrefix(start, []byte("OpusHead")) || bytes.HasPrefix(start, []byte("OpusTags"))
+		}
+
+		if !isHeader && granule > 0 {
+			binary.LittleEndian.PutUint64(result[i+6:], uint64(granule+int64(preSkip)))
+			// Zera checksum e recalcula
+			result[i+22] = 0; result[i+23] = 0; result[i+24] = 0; result[i+25] = 0
+			crc := oggCRC32(result[i:pageEnd])
+			binary.LittleEndian.PutUint32(result[i+22:], crc)
+		}
+
+		i = pageEnd
+	}
+	return result
+}
+
+// oggCRC32 calcula o checksum CRC32 para páginas OGG (polinômio 0x04C11DB7).
+func oggCRC32(data []byte) uint32 {
+	const poly = uint32(0x04c11db7)
+	crc := uint32(0)
+	for _, b := range data {
+		crc ^= uint32(b) << 24
+		for j := 0; j < 8; j++ {
+			if crc&0x80000000 != 0 {
+				crc = (crc << 1) ^ poly
+			} else {
+				crc <<= 1
+			}
+		}
+	}
+	return crc
+}
+
+func compressVideo(data []byte) ([]byte, string, error) {
+	// Salvar vídeo temporário
+	tmpInput := fmt.Sprintf("/tmp/video_input_%d.mp4", time.Now().UnixNano())
+	tmpOutput := fmt.Sprintf("/tmp/video_output_%d.mp4", time.Now().UnixNano())
+	
+	if err := os.WriteFile(tmpInput, data, 0644); err != nil {
+		return nil, "", fmt.Errorf("erro ao salvar vídeo temporário: %w", err)
+	}
+	defer os.Remove(tmpInput)
+	defer os.Remove(tmpOutput)
+	
+	// Comprimir com FFmpeg (reduz para ~70% do tamanho original)
+	cmd := exec.Command("ffmpeg", "-i", tmpInput, 
+		"-vcodec", "libx264", 
+		"-crf", "28",
+                "-acodec", "aac",
+                "-movflags", "+faststart",
+                "-pix_fmt", "yuv420p",
+                "-f", "mp4",
+		"-preset", "fast",
+		"-vf", "scale='min(1280,iw):-2'",
+		"-y", tmpOutput)
+	
+	if err := cmd.Run(); err != nil {
+		return nil, "", fmt.Errorf("erro ao comprimir vídeo: %w", err)
+	}
+	
+	compressed, err := os.ReadFile(tmpOutput)
+	if err != nil {
+		return nil, "", fmt.Errorf("erro ao ler vídeo comprimido: %w", err)
+	}
+	
+	log.Printf("[COMPRESS] Video compressed: %d bytes → %d bytes (%.1f%%)", 
+		len(data), len(compressed), float64(len(compressed))/float64(len(data))*100)
+	
+	return compressed, "video/mp4", nil
+}

@@ -12,7 +12,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.45
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/xuri/excelize/v2 v2.10.1
-	go.mau.fi/whatsmeow v0.0.0-20260630180629-b572e5bcb92b
+	go.mau.fi/whatsmeow v0.0.0-20260713112832-d8960d9575d2
 	golang.org/x/crypto v0.53.0
 	google.golang.org/protobuf v1.36.11
 )
